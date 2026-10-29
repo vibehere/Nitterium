@@ -47,20 +47,34 @@ class AppBarNavigationTest {
     private val backLabel: String
         get() = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.back)
 
-    @Test fun profileArrowReturnsToSubscriptionsAfterBrowsingTabs() {
+    @Test fun profileArrowFollowsPageHistoryThenReturnsToSubscriptions() {
         openDetailWithHistory(isProfile = true)
 
         compose.onNodeWithContentDescription(backLabel).performClick()
+        awaitPage("$origin/alice/with_replies")
+        compose.runOnIdle { assertEquals(0, nativeBackCount) }
 
+        compose.onNodeWithContentDescription(backLabel).performClick()
+        awaitPage("$origin/alice")
+        compose.runOnIdle { assertEquals(0, nativeBackCount) }
+
+        compose.onNodeWithContentDescription(backLabel).performClick()
         compose.onNodeWithText("Subscriptions").assertIsDisplayed()
         compose.runOnIdle { assertEquals(1, nativeBackCount) }
     }
 
-    @Test fun feedArrowReturnsToGroupsAfterBrowsingPages() {
+    @Test fun feedArrowFollowsPageHistoryThenReturnsToGroups() {
         openDetailWithHistory(isProfile = false)
 
         compose.onNodeWithContentDescription(backLabel).performClick()
+        awaitPage("$origin/alice/with_replies")
+        compose.runOnIdle { assertEquals(0, nativeBackCount) }
 
+        compose.onNodeWithContentDescription(backLabel).performClick()
+        awaitPage("$origin/alice")
+        compose.runOnIdle { assertEquals(0, nativeBackCount) }
+
+        compose.onNodeWithContentDescription(backLabel).performClick()
         compose.onNodeWithText("Feed groups").assertIsDisplayed()
         compose.runOnIdle { assertEquals(1, nativeBackCount) }
     }

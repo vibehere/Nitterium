@@ -136,11 +136,6 @@ fun SearchContent(
             textFieldState.setTextAndPlaceCursorAtEnd(state.searchQuery)
         }
     }
-    LaunchedEffect(textFieldState) {
-        snapshotFlow { textFieldState.text.toString() }
-            .distinctUntilChanged()
-            .collect { currentOnEvent(SearchEvent.UpdateQuery(it)) }
-    }
     LaunchedEffect(state.isSearchBarActive) {
         val target = if (state.isSearchBarActive) SearchBarValue.Expanded else SearchBarValue.Collapsed
         if (searchBarState.targetValue != target) {
@@ -221,7 +216,11 @@ fun SearchContent(
                         CenterAlignedTopAppBar(
                             title = {
                                 Text(
-                                    text = state.searchQuery.ifEmpty { stringResource(R.string.app_name) },
+                                    text = when {
+                                        state.currentUsername != null -> "@${state.currentUsername}"
+                                        state.searchQuery.isNotEmpty() -> state.searchQuery
+                                        else -> stringResource(R.string.app_name)
+                                    },
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -274,6 +273,8 @@ fun SearchContent(
                             darkTheme = isDarkTheme,
                             isRefreshing = state.isRefreshing,
                             isProfileView = state.currentUsername != null,
+                            filterSubscriptions = state.filterSubscriptions,
+                            mutedWords = state.mutedWords,
                             onRefresh = { 
                                 onEvent(SearchEvent.Refresh)
                                 if (!state.isError) {
@@ -357,8 +358,14 @@ fun SearchContent(
                         },
                         trailingIcon = {
                             if (textFieldState.text.isNotEmpty()) {
-                                IconButton(onClick = { textFieldState.setTextAndPlaceCursorAtEnd("") }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                                IconButton(onClick = {
+                                    textFieldState.setTextAndPlaceCursorAtEnd("")
+                                    onEvent(SearchEvent.UpdateQuery(""))
+                                }) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = stringResource(R.string.clear_search)
+                                    )
                                 }
                             }
                         },

@@ -1,6 +1,7 @@
 package com.kaleedtc.nitterium.ui.feature.subscriptions
 
 import com.kaleedtc.nitterium.data.model.Subscription
+import com.kaleedtc.nitterium.data.model.SubscriptionOptions
 import com.kaleedtc.nitterium.data.model.SubscriptionSortOrder
 
 data class SubscriptionsState(
@@ -22,7 +23,7 @@ sealed interface SubscriptionsEvent {
     data class SortOrderChanged(val order: SubscriptionSortOrder) : SubscriptionsEvent
     data class ReorderSubscriptions(val fromIndex: Int, val toIndex: Int) : SubscriptionsEvent
     data object SaveSubscriptionOrder : SubscriptionsEvent
-    data class UpdateSubscriptionGroups(val username: String, val groupIds: List<String>) : SubscriptionsEvent
+    data class UpdateSubscriptionOptions(val username: String, val options: SubscriptionOptions) : SubscriptionsEvent
 }
 
 sealed interface SubscriptionsEffect {

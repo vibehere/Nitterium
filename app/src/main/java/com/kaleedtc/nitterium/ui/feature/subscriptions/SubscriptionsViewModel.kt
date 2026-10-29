@@ -35,9 +35,18 @@ class SubscriptionsViewModel(
     override fun onEvent(event: SubscriptionsEvent) {
         when (event) {
             is SubscriptionsEvent.SearchQueryChanged -> setState { copy(searchQuery = event.query) }
-            is SubscriptionsEvent.UpdateSubscriptionGroups -> {
+            is SubscriptionsEvent.UpdateSubscriptionOptions -> {
                 viewModelScope.launch {
-                    subscriptionRepository.updateSubscriptionGroups(event.username, event.groupIds)
+                    val current = state.value.subscriptions.firstOrNull {
+                        it.username.equals(event.username, ignoreCase = true)
+                    } ?: return@launch
+                    subscriptionRepository.saveSubscriptionOptions(
+                        subscription = current,
+                        groupIds = event.options.groupIds,
+                        hideRetweets = event.options.hideRetweets,
+                        hideReplies = event.options.hideReplies,
+                        mutedInFeed = event.options.mutedInFeed
+                    )
                 }
             }
             is SubscriptionsEvent.RequestDelete -> {

@@ -26,7 +26,7 @@ class ImageRequestInterceptor(
                 .removeHeader("Proxy-Authorization")
                 .header("User-Agent", userAgent)
                 .header("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Accept-Language", PrivacyHeaders.ACCEPT_LANGUAGE)
                 .header("Referer", url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString())
             cookiesForUrl(url.toString())?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
             val response = chain.proceed(builder.build())

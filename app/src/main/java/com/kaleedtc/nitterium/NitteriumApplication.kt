@@ -11,31 +11,46 @@ import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.kaleedtc.nitterium.data.ConnectivityMonitor
 import com.kaleedtc.nitterium.data.ConnectivityMonitorImpl
+import com.kaleedtc.nitterium.data.repository.BackupRepository
+import com.kaleedtc.nitterium.data.repository.FeedGroupRepository
 import com.kaleedtc.nitterium.data.repository.SubscriptionRepository
 import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
+import com.kaleedtc.nitterium.data.security.ImageRequestInterceptor
+import com.kaleedtc.nitterium.data.security.SocksProxyController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okio.Path.Companion.toPath
-import com.kaleedtc.nitterium.data.security.ImageRequestInterceptor
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 
 class NitteriumApplication : Application(), SingletonImageLoader.Factory {
 
     lateinit var subscriptionRepository: SubscriptionRepository
     lateinit var userPreferencesRepository: UserPreferencesRepository
-    lateinit var feedGroupRepository: com.kaleedtc.nitterium.data.repository.FeedGroupRepository
+    lateinit var feedGroupRepository: FeedGroupRepository
     lateinit var connectivityMonitor: ConnectivityMonitor
-    lateinit var backupRepository: com.kaleedtc.nitterium.data.repository.BackupRepository
+    lateinit var backupRepository: BackupRepository
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
         subscriptionRepository = SubscriptionRepository(this)
         userPreferencesRepository = UserPreferencesRepository(this)
-        feedGroupRepository = com.kaleedtc.nitterium.data.repository.FeedGroupRepository(this)
-        backupRepository = com.kaleedtc.nitterium.data.repository.BackupRepository(
+        feedGroupRepository = FeedGroupRepository(this)
+        backupRepository = BackupRepository(
             this, subscriptionRepository, feedGroupRepository, userPreferencesRepository
         )
         connectivityMonitor = ConnectivityMonitorImpl(this)
+
+        applicationScope.launch {
+            userPreferencesRepository.socksProxy.collect { settings ->
+                SocksProxyController.apply(this@NitteriumApplication, settings)
+            }
+        }
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
@@ -47,9 +62,8 @@ class NitteriumApplication : Application(), SingletonImageLoader.Factory {
         val okHttpClient = OkHttpClient.Builder()
             .followRedirects(false)
             .followSslRedirects(false)
+            .proxySelector(SocksProxyController.okHttpProxySelector())
             .addInterceptor(ImageRequestInterceptor(
-                // Interceptors run on the image loader's worker. Read the current preference on
-                // each hop; a failed read fails the request instead of disabling privacy controls.
                 blockDirectX = { runBlocking { userPreferencesRepository.blockDirectX.first() } },
                 cookiesForUrl = cookieManager::getCookie,
                 userAgent = strippedUserAgent

@@ -115,8 +115,8 @@ fun SubscriptionsContent(
             subscription = subForGroups!!,
             allGroups = state.groups,
             onDismiss = { subForGroups = null },
-            onConfirm = { groupIds ->
-                onEvent(SubscriptionsEvent.UpdateSubscriptionGroups(subForGroups!!.username, groupIds))
+            onConfirm = { options ->
+                onEvent(SubscriptionsEvent.UpdateSubscriptionOptions(subForGroups!!.username, options))
                 subForGroups = null
             }
         )

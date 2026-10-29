@@ -80,7 +80,9 @@ fun NitteriumApp(
     val currentDestination = navBackStackEntry?.destination
     val isFullScreen = LocalFullScreenMode.current.value
 
-    val currentTab = rememberSaveable { mutableStateOf(defaultTab) }
+    val currentTab = rememberSaveable {
+        mutableStateOf(if (defaultTab == "FeedAll") "Feed" else defaultTab)
+    }
     var showInstancePicker by rememberSaveable { mutableStateOf(false) }
     if (showInstancePicker) {
         InstancePicker(app.userPreferencesRepository, onDismiss = { showInstancePicker = false })
@@ -105,7 +107,9 @@ fun NitteriumApp(
             currentTab.value = "Search"
         } else if (currentDestination?.hierarchy?.any { it.hasRoute<Subscriptions>() } == true) {
             currentTab.value = "Subscriptions"
-        } else if (currentDestination?.hierarchy?.any { it.hasRoute<Feed>() } == true) {
+        } else if (currentDestination?.hierarchy?.any {
+                it.hasRoute<Feed>() || it.hasRoute<FeedGroupDetails>()
+            } == true) {
             currentTab.value = "Feed"
         } else if (currentDestination?.hierarchy?.any { it.hasRoute<Settings>() } == true) {
             currentTab.value = "Settings"
@@ -173,8 +177,21 @@ fun NitteriumApp(
                     NavigationBarItem(
                         selected = isFeedFlow,
                         onClick = {
-                            if (!isFeedFlow) {
-                                currentTab.value = "Feed"
+                            currentTab.value = "Feed"
+                            val onFeedDetails = currentDestination?.hierarchy?.any {
+                                it.hasRoute<FeedGroupDetails>()
+                            } == true
+                            if (onFeedDetails) {
+                                if (!navController.popBackStack(route = Feed, inclusive = false)) {
+                                    navController.navigate(Feed) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                }
+                            } else if (!isFeedFlow) {
                                 navController.navigate(Feed) {
                                     popUpTo(navController.graph.findStartDestination().id) {
                                         saveState = true
@@ -224,13 +241,16 @@ fun NitteriumApp(
     ) { innerPadding ->
         val layoutDirection = LocalLayoutDirection.current
         
-        val startDestination = remember { when (defaultTab) {
-            "Search" -> Search()
-            "Subscriptions" -> Subscriptions
-            "Feed" -> Feed
-            "Settings" -> Settings
-            else -> Search()
-        } }
+        val startDestination = remember {
+            when (defaultTab) {
+                "Search" -> Search()
+                "Subscriptions" -> Subscriptions
+                "Feed" -> Feed
+                "FeedAll" -> FeedGroupDetails("all", "All")
+                "Settings" -> Settings
+                else -> Search()
+            }
+        }
 
         NavHost(
             navController = navController,
@@ -316,7 +336,8 @@ fun NitteriumApp(
                     factory = viewModelFactory {
                         FeedGroupsViewModel(
                             app.feedGroupRepository,
-                            app.subscriptionRepository
+                            app.subscriptionRepository,
+                            app.backupRepository
                         )
                     }
                 )
@@ -337,7 +358,12 @@ fun NitteriumApp(
                         FeedViewModel(
                             app.userPreferencesRepository,
                             app.subscriptionRepository,
-                            app.connectivityMonitor
+                            app.connectivityMonitor,
+                            app.feedGroupRepository,
+                            knownInstances = app.resources.getStringArray(
+                                com.kaleedtc.nitterium.R.array.default_instance_urls
+                            ).toList(),
+                            defaultUserAgent = FeedViewModel.defaultUserAgent(app)
                         ).apply {
                             if (details.groupId != "all") {
                                 setGroup(details.groupId, details.groupName)
@@ -349,7 +375,22 @@ fun NitteriumApp(
                 )
                 FeedScreen(
                     isDarkTheme = isDarkTheme,
-                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateBack = {
+                        if (!navController.popBackStack(route = Feed, inclusive = false) &&
+                            !navController.popBackStack()
+                        ) {
+                            navController.navigate(Feed) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onNavigateToGroups = {
+                        if (!navController.popBackStack(route = Feed, inclusive = false)) {
+                            navController.navigate(Feed) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
                     onSwitchInstance = { showInstancePicker = true },
                     viewModel = viewModel
                 )

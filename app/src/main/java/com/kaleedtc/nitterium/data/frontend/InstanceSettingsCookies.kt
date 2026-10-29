@@ -8,8 +8,9 @@ object InstanceSettingsCookies {
         .associate { it.proxyCookie to false }
 
     private val commonKeys = setOf(
-        "hideTweetStats", "hideBanner", "hidePins", "infiniteScroll",
-        "muteVideos", "autoplayGifs", "stickyProfile", "squareAvatars"
+        "hideTweetStats", "hideBanner", "hidePins", "hideRetweets", "hideReplies",
+        "hideCommunityNotes", "infiniteScroll", "muteVideos", "autoplayGifs",
+        "stickyProfile", "squareAvatars"
     )
 
     private fun parse(header: String): Map<String, String> = header.split(';').mapNotNull { cookie ->
@@ -23,8 +24,10 @@ object InstanceSettingsCookies {
         fun enabled(key: String, default: Boolean = false) = cookies[key]?.let { it == "on" } ?: default
         return NitterInstanceSettings(
             hideTweetStats = enabled("hideTweetStats"), hideBanner = enabled("hideBanner"),
-            hidePins = enabled("hidePins"), hlsPlayback = enabled(adapter.playbackCookie, true),
-            infiniteScroll = enabled("infiniteScroll"), proxyVideos = enabled(adapter.proxyCookie),
+            hidePins = enabled("hidePins"), hideRetweets = enabled("hideRetweets"),
+            hideReplies = enabled("hideReplies"), hideCommunityNotes = enabled("hideCommunityNotes"),
+            hlsPlayback = enabled(adapter.playbackCookie, true),
+            infiniteScroll = enabled("infiniteScroll", true), proxyVideos = enabled(adapter.proxyCookie),
             muteVideos = enabled("muteVideos"), autoplayGifs = enabled("autoplayGifs", true),
             stickyProfile = enabled("stickyProfile", true),
             squareAvatars = enabled("squareAvatars", frontend == FrontendType.TEAPOT),
@@ -38,6 +41,9 @@ object InstanceSettingsCookies {
             put("hideTweetStats", settings.hideTweetStats)
             put("hideBanner", settings.hideBanner)
             put("hidePins", settings.hidePins)
+            put("hideRetweets", settings.hideRetweets)
+            put("hideReplies", settings.hideReplies)
+            put("hideCommunityNotes", settings.hideCommunityNotes)
             put(adapter.playbackCookie, settings.hlsPlayback)
             put("infiniteScroll", settings.infiniteScroll)
             put(adapter.proxyCookie, settings.proxyVideos)
@@ -52,7 +58,11 @@ object InstanceSettingsCookies {
     fun missingDefaults(header: String, frontend: FrontendType): Map<String, Boolean> {
         val cookies = parse(header)
         val adapter = FrontendAdapter.forType(frontend)
-        return mapOf(adapter.playbackCookie to true, adapter.proxyCookie to false).filterKeys { it !in cookies }
+        return mapOf(
+            adapter.playbackCookie to true,
+            adapter.proxyCookie to false,
+            "infiniteScroll" to true
+        ).filterKeys { it !in cookies }
     }
 
     /** Seed both proxy keys before loading a page, while its frontend may still be unknown. */
@@ -73,6 +83,9 @@ object InstanceSettingsCookies {
         "hideTweetStats" -> settings.copy(hideTweetStats = value)
         "hideBanner" -> settings.copy(hideBanner = value)
         "hidePins" -> settings.copy(hidePins = value)
+        "hideRetweets" -> settings.copy(hideRetweets = value)
+        "hideReplies" -> settings.copy(hideReplies = value)
+        "hideCommunityNotes" -> settings.copy(hideCommunityNotes = value)
         "hlsPlayback" -> settings.copy(hlsPlayback = value)
         "infiniteScroll" -> settings.copy(infiniteScroll = value)
         "proxyVideos" -> settings.copy(proxyVideos = value)

@@ -123,6 +123,15 @@ fun ProfileContent(
         )
     }
 
+    fun navigateUp() {
+        val wv = webView
+        if (!state.isError && wv?.canGoBack() == true) {
+            wv.goBack()
+        } else {
+            onNavigateBack()
+        }
+    }
+
     // Handle Back Press
     BackHandler(enabled = !state.isError && webView?.canGoBack() == true) {
         webView?.goBack()
@@ -138,7 +147,7 @@ fun ProfileContent(
                 CenterAlignedTopAppBar(
                     title = { },
                     navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
+                        IconButton(onClick = { navigateUp() }) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = stringResource(R.string.back)
@@ -187,6 +196,8 @@ fun ProfileContent(
                         darkTheme = isDarkTheme,
                         isRefreshing = state.isRefreshing,
                         isProfileView = true,
+                        filterSubscriptions = state.filterSubscriptions,
+                        mutedWords = state.mutedWords,
                         onRefresh = { 
                             onEvent(ProfileEvent.Refresh)
                             if (!state.isError) {

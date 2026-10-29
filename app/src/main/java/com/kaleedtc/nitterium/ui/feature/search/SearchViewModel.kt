@@ -30,9 +30,15 @@ class SearchViewModel(
         viewModelScope.launch {
             subscriptionRepository.subscriptions.collect { subscriptions ->
                 setState {
-                    copy(isSubscribed = subscriptions.any { it.username.equals(currentUsername, ignoreCase = true) })
+                    copy(
+                        filterSubscriptions = subscriptions,
+                        isSubscribed = subscriptions.any { it.username.equals(currentUsername, ignoreCase = true) }
+                    )
                 }
             }
+        }
+        viewModelScope.launch {
+            preferencesRepository.mutedWords.collect { words -> setState { copy(mutedWords = words) } }
         }
         viewModelScope.launch {
             connectivityMonitor.isConnected.collect { isConnected ->
@@ -88,12 +94,23 @@ class SearchViewModel(
             }
             SearchEvent.EditGroups -> editGroups()
             SearchEvent.DismissGroups -> if (!state.value.isSavingGroups) setState { copy(groupAssignment = null) }
-            is SearchEvent.SaveGroups -> saveGroups(event.groupIds)
+            is SearchEvent.SaveGroups -> saveGroups(event.options)
             is SearchEvent.UpdateQuery -> {
-                setState { copy(searchQuery = event.query) }
+                if (event.query.isEmpty()) {
+                    setState { copy(searchQuery = "") }
+                }
             }
             is SearchEvent.ToggleSearchBar -> {
-                setState { copy(isSearchBarActive = event.active) }
+                if (event.active) {
+                    setState { copy(isSearchBarActive = true) }
+                } else {
+                    setState {
+                        copy(
+                            isSearchBarActive = false,
+                            searchQuery = if (currentUrl.isEmpty()) "" else searchQuery
+                        )
+                    }
+                }
             }
             is SearchEvent.ConnectivityChanged -> {
                 setState { copy(isConnected = event.isConnected) }
@@ -269,14 +286,20 @@ class SearchViewModel(
         }
     }
 
-    private fun saveGroups(groupIds: List<String>) {
+    private fun saveGroups(options: com.kaleedtc.nitterium.data.model.SubscriptionOptions) {
         val subscription = state.value.groupAssignment ?: return
         if (state.value.isSavingGroups) return
         setState { copy(isSavingGroups = true) }
         viewModelScope.launch {
             val groups = groupRepository.groups.first()
-            val validIds = groupIds.filter { id -> groups.any { it.id == id } }
-            subscriptionRepository.saveSubscriptionGroups(subscription, validIds).fold(
+            val validIds = options.groupIds.filter { id -> groups.any { it.id == id } }
+            subscriptionRepository.saveSubscriptionOptions(
+                subscription = subscription,
+                groupIds = validIds,
+                hideRetweets = options.hideRetweets,
+                hideReplies = options.hideReplies,
+                mutedInFeed = options.mutedInFeed
+            ).fold(
                 onSuccess = {
                     setState { copy(groupAssignment = null, isSavingGroups = false) }
                     setEffect { SearchEffect.ShowMessage(R.string.groups_saved) }

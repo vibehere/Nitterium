@@ -25,8 +25,24 @@ data class AppSettingsBackup(
     val detectedFrontends: Map<String, FrontendType> = emptyMap(),
     val instanceOptions: Map<String, InstanceOptionsBackup> = emptyMap(),
     val showReleaseNotes: Boolean = true,
-    val subscriptionSortOrder: SubscriptionSortOrder = SubscriptionSortOrder.MANUAL
-)
+    val subscriptionSortOrder: SubscriptionSortOrder = SubscriptionSortOrder.MANUAL,
+    val socksProxyEnabled: Boolean = false,
+    val socksProxyHost: String = SocksProxySettings.DEFAULT_HOST,
+    val socksProxyPort: Int = SocksProxySettings.DEFAULT_PORT,
+    val socksProxyImages: Boolean = true,
+    val instanceKeys: Map<String, String> = emptyMap(),
+    val feedUsersPerBatch: Int = 10,
+    val feedAutoLoadBatches: Boolean = true,
+    val feedSpreadAcrossInstances: Boolean = false,
+    val mutedWords: List<String> = emptyList()
+) {
+    fun socksProxy(): SocksProxySettings = SocksProxySettings(
+        enabled = socksProxyEnabled,
+        host = socksProxyHost,
+        port = socksProxyPort,
+        proxyImages = socksProxyImages
+    )
+}
 
 @Serializable
 data class InstanceOptionsBackup(
@@ -72,13 +88,29 @@ object BackupCodec {
 
     fun decode(content: String, instanceUrl: String): NitteriumBackup {
         ImportLimits.validate(content)
-        val root = json.parseToJsonElement(content)
-        val backup = if (root is JsonObject && "format" in root) {
-            require(root["version"]?.jsonPrimitive?.intOrNull == 1) { "Unsupported backup version" }
-            json.decodeFromJsonElement(NitteriumBackup.serializer(), root)
-        } else {
-            val legacy = SubscriptionImportParser.parse(content, instanceUrl)
-            NitteriumBackup(subscriptions = legacy.subscriptions, groups = legacy.groups, skipped = legacy.skipped)
+        val trimmed = content.trim().removePrefix("\uFEFF")
+        val root = runCatching { json.parseToJsonElement(trimmed) }.getOrNull()
+        val backup = when {
+            root is JsonObject && "format" in root -> {
+                require(root["version"]?.jsonPrimitive?.intOrNull == 1) { "Unsupported backup version" }
+                json.decodeFromJsonElement(NitteriumBackup.serializer(), root)
+            }
+            root != null -> {
+                val legacy = SubscriptionImportParser.parse(trimmed, instanceUrl)
+                NitteriumBackup(
+                    subscriptions = legacy.subscriptions,
+                    groups = legacy.groups,
+                    skipped = legacy.skipped
+                )
+            }
+            else -> {
+                val legacy = SubscriptionImportParser.parseUsernameList(trimmed, instanceUrl)
+                NitteriumBackup(
+                    subscriptions = legacy.subscriptions,
+                    groups = legacy.groups,
+                    skipped = legacy.skipped
+                )
+            }
         }
         validate(backup)
         return backup
@@ -99,6 +131,10 @@ object BackupCodec {
             require(urls.all(::isInstanceUrl)) { "Invalid instance URL" }
             require(settings.detectedFrontends.values.none { it == FrontendType.AUTO }) { "Invalid detected frontend" }
             require(settings.instanceOptions.values.none { it.frontend == FrontendType.AUTO }) { "Invalid instance options" }
+            require(settings.socksProxy().isValid() || !settings.socksProxyEnabled) { "Invalid SOCKS proxy" }
+            require(settings.instanceKeys.keys.all { it.isNotBlank() && !it.contains('/') }) {
+                "Invalid instance access key host"
+            }
         }
     }
 

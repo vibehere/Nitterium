@@ -53,6 +53,58 @@ class BackupRepository(
         }
     }
 
+    suspend fun exportGroups(uri: Uri, groupIds: Set<String>, asUsernameList: Boolean): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                require(groupIds.isNotEmpty()) { "No groups selected" }
+                val allGroups = groups.groups.first()
+                val selectedGroups = allGroups.filter { it.id in groupIds }
+                require(selectedGroups.isNotEmpty()) { "No groups selected" }
+                val selectedIds = selectedGroups.map { it.id }.toSet()
+                val members = subscriptions.subscriptions.first()
+                    .filter { sub -> sub.groupIds.any { it in selectedIds } }
+                    .map { it.copy(groupIds = it.groupIds.filter { id -> id in selectedIds }) }
+                val content = if (asUsernameList) {
+                    SubscriptionImportParser.encodeUsernameList(members.map { it.username })
+                } else {
+                    BackupCodec.encode(
+                        NitteriumBackup(subscriptions = members, groups = selectedGroups),
+                        BackupScope.SUBSCRIPTIONS_AND_GROUPS
+                    )
+                }
+                resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(content) }
+                    ?: error("Could not open backup destination")
+                Result.success(Unit)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+
+    suspend fun importIntoGroups(uri: Uri, groupIds: Set<String>): Result<ImportReport> =
+        withContext(Dispatchers.IO) {
+            try {
+                require(groupIds.isNotEmpty()) { "No groups selected" }
+                val known = groups.groups.first().map { it.id }.toSet()
+                val targetIds = groupIds.filter { it in known }.toSet()
+                require(targetIds.isNotEmpty()) { "No groups selected" }
+                val content = resolver.openInputStream(uri)?.bufferedReader()?.use { ImportLimits.read(it) }
+                    ?: error("Could not open backup")
+                val imported = SubscriptionImportParser.parse(content, preferences.instanceUrl.first())
+                val withTargets = imported.copy(
+                    subscriptions = imported.subscriptions.map { sub ->
+                        sub.copy(groupIds = (sub.groupIds + targetIds).distinct())
+                    }
+                )
+                subscriptions.mergeImportedSubscriptions(withTargets, groups)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+
     suspend fun read(uri: Uri): Result<NitteriumBackup> = withContext(Dispatchers.IO) {
         try {
             val content = resolver.openInputStream(uri)?.bufferedReader()?.use { reader ->

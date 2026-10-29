@@ -20,13 +20,86 @@ object UrlPolicy {
         return value.toHttpUrlOrNull()?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() }
     }
 
-    fun sameOrigin(instance: String, page: String?): Boolean {
-        val a = httpsUrl(instance) ?: return false
-        val b = httpsUrl(page) ?: return false
-        return a.host == b.host && a.port == b.port
+    /**
+     * Accepts HTTPS instances, or HTTP `.onion` instances for Tor.
+     * Clearnet HTTP is rejected.
+     */
+    fun instanceUrl(value: String?): HttpUrl? {
+        if (value == null || value.length > MAX_URL_LENGTH || value.any { it.isISOControl() }) return null
+        val uri = runCatching { URI(value) }.getOrNull() ?: return null
+        val host = uri.host?.trimEnd('.') ?: return null
+        if (uri.rawUserInfo != null) return null
+        val onion = isOnionHost(host)
+        val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return null
+        when {
+            scheme == "https" -> Unit
+            scheme == "http" && onion -> Unit
+            else -> return null
+        }
+        return value.toHttpUrlOrNull()?.takeIf {
+            it.username.isEmpty() && it.password.isEmpty() &&
+                (it.isHttps || (it.scheme == "http" && isOnionHost(it.host)))
+        }
     }
 
-    fun origin(url: String): String? = httpsUrl(url)?.newBuilder()
+    fun isOnionHost(host: String): Boolean =
+        host.trimEnd('.').lowercase(Locale.ROOT).endsWith(".onion")
+
+    /** Short host label for pickers; long .onion names are abbreviated. */
+    fun displayHost(url: String): String {
+        val host = instanceUrl(url)?.host ?: return url
+        if (!isOnionHost(host) || host.length <= 36) return host
+        return host.take(14) + "…" + host.takeLast(12)
+    }
+
+    fun isTorFriendlyInstance(url: String, torFriendly: Collection<String>): Boolean {
+        val parsed = instanceUrl(url) ?: return false
+        if (isOnionHost(parsed.host)) return true
+        val normalized = parsed.toString().trimEnd('/')
+        return torFriendly.any {
+            instanceUrl(it)?.toString()?.trimEnd('/') == normalized
+        }
+    }
+
+    enum class InstanceGroup { TorFriendly, Public, Onion, Custom }
+
+    fun instanceGroup(
+        url: String,
+        builtIn: Collection<String>,
+        custom: Collection<String>,
+        torFriendly: Collection<String>,
+    ): InstanceGroup {
+        val host = instanceUrl(url)?.host.orEmpty()
+        if (isOnionHost(host)) return InstanceGroup.Onion
+        val normalized = instanceUrl(url)?.toString()?.trimEnd('/')
+        val isCustom = custom.any { instanceUrl(it)?.toString()?.trimEnd('/') == normalized } &&
+            builtIn.none { instanceUrl(it)?.toString()?.trimEnd('/') == normalized }
+        if (isCustom) return InstanceGroup.Custom
+        if (isTorFriendlyInstance(url, torFriendly)) return InstanceGroup.TorFriendly
+        return InstanceGroup.Public
+    }
+
+    fun groupedInstanceChoices(
+        builtIn: List<String>,
+        custom: Collection<String>,
+        selected: String,
+        torFriendly: Collection<String>,
+    ): List<Pair<InstanceGroup, List<String>>> {
+        val choices = instanceChoices(builtIn, custom.toSet(), selected)
+        return InstanceGroup.entries.mapNotNull { group ->
+            val items = choices.filter { instanceGroup(it, builtIn, custom, torFriendly) == group }
+            items.takeIf { it.isNotEmpty() }?.let { group to it }
+        }
+    }
+
+    fun sameOrigin(instance: String, page: String?): Boolean {
+        val a = instanceUrl(instance) ?: return false
+        val b = instanceUrl(page) ?: return false
+        return a.host.equals(b.host, ignoreCase = true) && a.port == b.port &&
+            a.scheme.equals(b.scheme, ignoreCase = true)
+    }
+
+    fun origin(url: String): String? = instanceUrl(url)?.newBuilder()
         ?.encodedPath("/")?.query(null)?.fragment(null)?.build()?.toString()?.trimEnd('/')
 
     fun isXHost(host: String): Boolean {
@@ -40,16 +113,17 @@ object UrlPolicy {
         ?.takeUnless { blockDirectX && isXHost(it.host) }?.toString()
 
     fun instanceChoices(builtIn: List<String>, custom: Set<String>, selected: String): List<String> =
-        (builtIn + custom + selected).filter { httpsUrl(it) != null }.distinctBy { it.trimEnd('/') }
+        (builtIn + custom + selected).filter { instanceUrl(it) != null }.distinctBy { it.trimEnd('/') }
 
     /** Move the current page to another instance without decoding its path or query. */
     fun switchInstance(previous: String, next: String, page: String): String? {
-        val oldBase = httpsUrl(previous) ?: return null
-        val newBase = httpsUrl(next) ?: return null
-        val current = httpsUrl(page)?.takeIf { sameOrigin(previous, page) } ?: return null
+        val oldBase = instanceUrl(previous) ?: return null
+        val newBase = instanceUrl(next) ?: return null
+        val current = instanceUrl(page)?.takeIf { sameOrigin(previous, page) } ?: return null
         val oldPath = oldBase.encodedPath.trimEnd('/')
         val relativePath = if (oldPath.isNotEmpty() &&
-            (current.encodedPath == oldPath || current.encodedPath.startsWith("$oldPath/"))) {
+            (current.encodedPath == oldPath || current.encodedPath.startsWith("$oldPath/"))
+        ) {
             current.encodedPath.removePrefix(oldPath)
         } else current.encodedPath
         return newBase.newBuilder()
@@ -66,7 +140,7 @@ object UrlPolicy {
         val source = incoming.toHttpUrlOrNull()?.takeIf {
             it.host in linkHosts && it.username.isEmpty() && it.password.isEmpty()
         } ?: return null
-        val base = httpsUrl(instance) ?: return null
+        val base = instanceUrl(instance) ?: return null
         return base.newBuilder()
             .encodedPath(base.encodedPath.trimEnd('/') + source.encodedPath)
             .encodedQuery(source.encodedQuery)
@@ -75,10 +149,10 @@ object UrlPolicy {
     }
 
     fun profileUsername(page: String, instance: String? = null): String? {
-        val url = httpsUrl(page) ?: return null
+        val url = instanceUrl(page) ?: return null
         val baseSegments = if (instance == null) emptyList() else {
             if (!sameOrigin(instance, page)) return null
-            httpsUrl(instance)?.pathSegments?.dropLastWhile { it.isEmpty() } ?: return null
+            instanceUrl(instance)?.pathSegments?.dropLastWhile { it.isEmpty() } ?: return null
         }
         if (url.pathSegments.take(baseSegments.size) != baseSegments) return null
         val first = url.pathSegments.getOrNull(baseSegments.size) ?: return null

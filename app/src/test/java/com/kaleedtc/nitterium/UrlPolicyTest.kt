@@ -26,6 +26,36 @@ class UrlPolicyTest {
         )
         assertEquals(builtIn + "https://selected.example", UrlPolicy.instanceChoices(builtIn, emptySet(), "https://selected.example"))
     }
+
+    @Test fun instanceUrlAllowsOnionHttpButRejectsClearnetHttp() {
+        val onion = "http://nitter.lesboswza6waq3itqo46rvf5a7dibxih32f2umwg6fpssxj66spmclyd.onion"
+        assertNotNull(UrlPolicy.instanceUrl(onion))
+        assertTrue(UrlPolicy.isOnionHost("nitter.lesboswza6waq3itqo46rvf5a7dibxih32f2umwg6fpssxj66spmclyd.onion"))
+        assertNull(UrlPolicy.instanceUrl("http://nitter.example.com"))
+        assertNotNull(UrlPolicy.instanceUrl("https://nitter.example.com"))
+        assertEquals(
+            listOf(onion),
+            UrlPolicy.instanceChoices(listOf(onion), emptySet(), onion)
+        )
+        assertTrue(UrlPolicy.isTorFriendlyInstance(onion, emptyList()))
+        assertTrue(UrlPolicy.isTorFriendlyInstance("https://xitter.cf", listOf("https://xitter.cf/")))
+        assertFalse(UrlPolicy.isTorFriendlyInstance("https://other.example", listOf("https://xitter.cf")))
+        assertEquals("xitter.cf", UrlPolicy.displayHost("https://xitter.cf/"))
+        assertTrue(UrlPolicy.displayHost(onion).contains("…"))
+        val builtIn = listOf("https://xitter.cf", "https://public.example", onion)
+        val groups = UrlPolicy.groupedInstanceChoices(
+            builtIn, setOf("https://mine.example"), "https://xitter.cf", listOf("https://xitter.cf")
+        )
+        assertEquals(
+            listOf(
+                UrlPolicy.InstanceGroup.TorFriendly to listOf("https://xitter.cf"),
+                UrlPolicy.InstanceGroup.Public to listOf("https://public.example"),
+                UrlPolicy.InstanceGroup.Onion to listOf(onion),
+                UrlPolicy.InstanceGroup.Custom to listOf("https://mine.example"),
+            ),
+            groups
+        )
+    }
     @Test fun explicitIntentCannotReplaceTheSelectedAuthority() {
         listOf(
             "@evil.example/alice", "//evil.example/alice", "javascript:alert(1)",

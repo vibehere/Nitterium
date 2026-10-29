@@ -28,17 +28,33 @@ configure<com.android.build.api.dsl.ApplicationExtension> {
         includeInBundle = false
     }
 
+    signingConfigs {
+        create("release") {
+            val storePath = System.getenv("NITTERIUM_STORE_FILE")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = file(storePath)
+                storePassword = System.getenv("NITTERIUM_STORE_PASSWORD")
+                keyAlias = System.getenv("NITTERIUM_KEY_ALIAS")
+                keyPassword = System.getenv("NITTERIUM_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isDebuggable = false
-            // Enables code-related app optimization.
             isMinifyEnabled = true
-            // Enables resource shrinking.
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use upload keystore when CI secrets are present; otherwise debug so CI still builds.
+            signingConfig = if (!System.getenv("NITTERIUM_STORE_FILE").isNullOrBlank()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -85,6 +101,7 @@ dependencies {
     // Serialization
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.swiperefreshlayout)
+    implementation(libs.androidx.webkit)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

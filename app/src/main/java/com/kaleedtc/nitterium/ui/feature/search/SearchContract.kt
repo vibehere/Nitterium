@@ -24,13 +24,15 @@ data class SearchState(
     val isSiteHeaderEnabled: Boolean = false,
     val isBlockDirectXEnabled: Boolean = false,
     val showUnsubscribeDialog: Boolean = false,
-    val isConnected: Boolean = true
+    val isConnected: Boolean = true,
+    val filterSubscriptions: List<com.kaleedtc.nitterium.data.model.Subscription> = emptyList(),
+    val mutedWords: List<String> = emptyList()
 )
 
 sealed interface SearchEvent {
     data object EditGroups : SearchEvent
     data object DismissGroups : SearchEvent
-    data class SaveGroups(val groupIds: List<String>) : SearchEvent
+    data class SaveGroups(val options: com.kaleedtc.nitterium.data.model.SubscriptionOptions) : SearchEvent
     data class UpdateQuery(val query: String) : SearchEvent
     data class PerformSearch(val query: String) : SearchEvent
     data class ToggleSearchBar(val active: Boolean) : SearchEvent

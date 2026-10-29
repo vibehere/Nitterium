@@ -100,10 +100,55 @@ class SubscriptionRepository(context: Context) {
         } }
     }
 
-    suspend fun saveSubscriptionGroups(subscription: Subscription, groupIds: List<String>): Result<Unit> = change { current ->
+    suspend fun removeGroupMembership(groupId: String) {
+        change { current ->
+            current.map { subscription ->
+                if (groupId !in subscription.groupIds) subscription
+                else subscription.copy(groupIds = subscription.groupIds.filterNot { it == groupId })
+            }
+        }
+    }
+
+    suspend fun setGroupMembers(groupId: String, usernames: Set<String>): Result<Unit> = change { current ->
+        val selected = usernames.map { it.lowercase(Locale.ROOT) }.toSet()
+        current.map { subscription ->
+            val shouldBelong = subscription.username.lowercase(Locale.ROOT) in selected
+            val belongs = groupId in subscription.groupIds
+            when {
+                shouldBelong && !belongs -> subscription.copy(groupIds = (subscription.groupIds + groupId).distinct())
+                !shouldBelong && belongs -> subscription.copy(groupIds = subscription.groupIds.filterNot { it == groupId })
+                else -> subscription
+            }
+        }
+    }
+
+    suspend fun saveSubscriptionGroups(subscription: Subscription, groupIds: List<String>): Result<Unit> =
+        saveSubscriptionOptions(
+            subscription = subscription,
+            groupIds = groupIds,
+            hideRetweets = subscription.hideRetweets,
+            hideReplies = subscription.hideReplies,
+            mutedInFeed = subscription.mutedInFeed
+        )
+
+    suspend fun saveSubscriptionOptions(
+        subscription: Subscription,
+        groupIds: List<String>,
+        hideRetweets: Boolean? = subscription.hideRetweets,
+        hideReplies: Boolean? = subscription.hideReplies,
+        mutedInFeed: Boolean = subscription.mutedInFeed
+    ): Result<Unit> = change { current ->
         val existing = current.firstOrNull { it.username.equals(subscription.username, ignoreCase = true) }
-        val updated = (existing ?: subscription).copy(groupIds = groupIds.distinct())
-        if (existing == null) current + updated else current.map { if (it === existing) updated else it }
+        val updated = (existing ?: subscription).copy(
+            groupIds = groupIds.distinct(),
+            hideRetweets = hideRetweets,
+            hideReplies = hideReplies,
+            mutedInFeed = mutedInFeed
+        )
+        if (existing == null) current + updated
+        else current.map {
+            if (it.username.equals(existing.username, ignoreCase = true)) updated else it
+        }
     }
 
     fun isSubscribed(username: String): Boolean {

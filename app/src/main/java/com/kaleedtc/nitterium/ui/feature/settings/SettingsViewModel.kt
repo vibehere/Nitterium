@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.kaleedtc.nitterium.R
 import com.kaleedtc.nitterium.data.model.NitterInstanceSettings
 import com.kaleedtc.nitterium.data.model.ReleaseNotesPreferences
+import com.kaleedtc.nitterium.data.model.SocksProxySettings
 import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
 import com.kaleedtc.nitterium.data.repository.BackupRepository
 import com.kaleedtc.nitterium.ui.common.MviViewModel
@@ -48,7 +49,13 @@ class SettingsViewModel(
                 _instanceSettings,
                 preferencesRepository.frontendMode,
                 preferencesRepository.frontend,
-                preferencesRepository.releaseNotesPreferences
+                preferencesRepository.releaseNotesPreferences,
+                preferencesRepository.socksProxy,
+                preferencesRepository.instanceKeys,
+                preferencesRepository.feedUsersPerBatch,
+                preferencesRepository.feedAutoLoadBatches,
+                preferencesRepository.feedSpreadAcrossInstances,
+                preferencesRepository.mutedWords
             ) { args ->
                 val url = args[0] as String
                 val dynamic = args[1] as Boolean
@@ -63,6 +70,8 @@ class SettingsViewModel(
                 val instanceSettings = args[9] as NitterInstanceSettings
 
                 val allInstances = availableInstances + customInstances
+                @Suppress("UNCHECKED_CAST")
+                val instanceKeys = args[14] as Map<String, String>
 
                 SettingsState(
                     frontendMode = args[10] as FrontendType,
@@ -80,7 +89,13 @@ class SettingsViewModel(
                     customInstances = customInstances,
                     instanceSettings = instanceSettings,
                     appVersion = _appVersion,
-                    showReleaseNotesAfterUpdates = (args[12] as ReleaseNotesPreferences).enabled
+                    showReleaseNotesAfterUpdates = (args[12] as ReleaseNotesPreferences).enabled,
+                    socksProxy = args[13] as SocksProxySettings,
+                    instanceKey = instanceKeys[UserPreferencesRepository.hostOf(url)].orEmpty(),
+                    feedUsersPerBatch = args[15] as Int,
+                    feedAutoLoadBatches = args[16] as Boolean,
+                    feedSpreadAcrossInstances = args[17] as Boolean,
+                    mutedWords = @Suppress("UNCHECKED_CAST") (args[18] as List<String>)
                 )
             }.collect { newState ->
                 setState { newState.copy(isBackupBusy = isBackupBusy, backupToRestore = backupToRestore) }
@@ -135,8 +150,8 @@ class SettingsViewModel(
                 setEffect { SettingsEffect.NavigateToUrl(event.url) }
             }
             is SettingsEvent.UpdateInstanceUrl -> {
-                if (com.kaleedtc.nitterium.data.security.UrlPolicy.httpsUrl(event.url) == null) {
-                    setEffect { SettingsEffect.ShowSnackbar("Use an HTTPS instance URL without credentials") }
+                if (com.kaleedtc.nitterium.data.security.UrlPolicy.instanceUrl(event.url) == null) {
+                    setEffect { SettingsEffect.ShowSnackbar(application.getString(R.string.instance_url_invalid)) }
                     return
                 }
                 viewModelScope.launch {
@@ -144,8 +159,8 @@ class SettingsViewModel(
                 }
             }
             is SettingsEvent.AddCustomInstance -> {
-                if (com.kaleedtc.nitterium.data.security.UrlPolicy.httpsUrl(event.url) == null) {
-                    setEffect { SettingsEffect.ShowSnackbar("Use an HTTPS instance URL without credentials") }
+                if (com.kaleedtc.nitterium.data.security.UrlPolicy.instanceUrl(event.url) == null) {
+                    setEffect { SettingsEffect.ShowSnackbar(application.getString(R.string.instance_url_invalid)) }
                     return
                 }
                 viewModelScope.launch {
@@ -191,6 +206,18 @@ class SettingsViewModel(
             is SettingsEvent.UpdateBlockDirectX -> {
                 viewModelScope.launch {
                     preferencesRepository.setBlockDirectX(event.enabled)
+                    if (event.enabled) {
+                        instanceOptions.ensureMediaProxyEnabled(state.value.instanceUrl)
+                        if (instanceOptions.setOption(
+                                state.value.instanceUrl,
+                                state.value.frontend,
+                                "proxyVideos",
+                                true
+                            )
+                        ) {
+                            _instanceSettings.value = _instanceSettings.value.copy(proxyVideos = true)
+                        }
+                    }
                 }
             }
             is SettingsEvent.UpdateDarkTheme -> {
@@ -203,10 +230,66 @@ class SettingsViewModel(
                     preferencesRepository.setShowReleaseNotes(event.enabled)
                 }
             }
+            is SettingsEvent.UpdateSocksProxy -> {
+                if (event.settings.enabled && !event.settings.isValid()) {
+                    setEffect {
+                        SettingsEffect.ShowSnackbar(application.getString(R.string.socks_proxy_invalid))
+                    }
+                    return
+                }
+                viewModelScope.launch {
+                    preferencesRepository.setSocksProxy(event.settings)
+                }
+            }
+            is SettingsEvent.UpdateInstanceKey -> {
+                viewModelScope.launch {
+                    preferencesRepository.setInstanceKey(state.value.instanceUrl, event.key)
+                }
+            }
             is SettingsEvent.UpdateInstanceSetting -> {
+                if (event.key == "proxyVideos" && !event.value && state.value.isBlockDirectXEnabled) {
+                    setEffect {
+                        SettingsEffect.ShowSnackbar(
+                            application.getString(R.string.proxy_required_when_blocking_x)
+                        )
+                    }
+                    return
+                }
                 val updated = InstanceSettingsCookies.update(_instanceSettings.value, event.key, event.value) ?: return
                 if (instanceOptions.setOption(state.value.instanceUrl, state.value.frontend, event.key, event.value)) {
                     _instanceSettings.value = updated
+                }
+            }
+            SettingsEvent.ClearInstanceCookies -> {
+                val reset = instanceOptions.clearAndReset(state.value.instanceUrl, state.value.frontend)
+                _instanceSettings.value = reset
+                setEffect {
+                    SettingsEffect.ShowSnackbar(application.getString(R.string.instance_cookies_cleared))
+                }
+            }
+            is SettingsEvent.UpdateFeedUsersPerBatch -> {
+                viewModelScope.launch {
+                    preferencesRepository.setFeedUsersPerBatch(event.size)
+                }
+            }
+            is SettingsEvent.UpdateFeedAutoLoadBatches -> {
+                viewModelScope.launch {
+                    preferencesRepository.setFeedAutoLoadBatches(event.enabled)
+                }
+            }
+            is SettingsEvent.UpdateFeedSpreadAcrossInstances -> {
+                viewModelScope.launch {
+                    preferencesRepository.setFeedSpreadAcrossInstances(event.enabled)
+                }
+            }
+            is SettingsEvent.AddMutedWord -> {
+                viewModelScope.launch {
+                    preferencesRepository.addMutedWord(event.word)
+                }
+            }
+            is SettingsEvent.RemoveMutedWord -> {
+                viewModelScope.launch {
+                    preferencesRepository.removeMutedWord(event.word)
                 }
             }
         }

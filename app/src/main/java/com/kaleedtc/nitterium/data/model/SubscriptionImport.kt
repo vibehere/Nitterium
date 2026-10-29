@@ -14,27 +14,39 @@ data class SubscriptionImport(
 
 data class ImportReport(val added: Int, val duplicates: Int, val skipped: Int)
 
-/** Converts document formats without touching storage or fetching profile metadata. */
+/** Parses Nitterium/QuaX JSON and plain username lists without touching storage. */
 object SubscriptionImportParser {
     private val json = Json { ignoreUnknownKeys = true }
     private val usernamePattern = Regex("[A-Za-z0-9_]{1,15}")
 
     fun parse(content: String, instanceUrl: String, now: Long = System.currentTimeMillis()): SubscriptionImport {
         ImportLimits.validate(content)
-        val root = json.parseToJsonElement(content)
-        if (root is JsonObject && "format" in root) {
-            val backup = BackupCodec.decode(content, instanceUrl)
-            return SubscriptionImport(
-                requireNotNull(backup.subscriptions) { "This backup contains settings only" },
-                backup.groups.orEmpty()
-            )
+        val trimmed = content.trim().removePrefix("\uFEFF")
+        if (trimmed.isEmpty()) return SubscriptionImport(emptyList())
+        val root = runCatching { json.parseToJsonElement(trimmed) }.getOrNull()
+            ?: return parseUsernameList(trimmed, instanceUrl, now)
+        when (root) {
+            is JsonObject -> {
+                if ("format" in root) {
+                    val backup = BackupCodec.decode(trimmed, instanceUrl)
+                    return SubscriptionImport(
+                        requireNotNull(backup.subscriptions) { "This backup contains settings only" },
+                        backup.groups.orEmpty()
+                    )
+                }
+                require(root["subscriptions"] is JsonArray) { "Unsupported subscriptions file" }
+                return parseQuaX(root, instanceUrl, now)
+            }
+            is JsonArray -> {
+                val subscriptions = json.decodeFromJsonElement<List<Subscription>>(root)
+                require(subscriptions.all { usernamePattern.matches(it.username) }) { "Invalid username" }
+                return SubscriptionImport(subscriptions)
+            }
+            else -> error("Unsupported subscriptions file")
         }
-        if (root is JsonArray) {
-            val subscriptions = json.decodeFromJsonElement<List<Subscription>>(root)
-            require(subscriptions.all { usernamePattern.matches(it.username) }) { "Invalid username" }
-            return SubscriptionImport(subscriptions)
-        }
-        require(root is JsonObject && root["subscriptions"] is JsonArray) { "Unsupported subscriptions file" }
+    }
+
+    private fun parseQuaX(root: JsonObject, instanceUrl: String, now: Long): SubscriptionImport {
         val users = root.getValue("subscriptions").jsonArray
         val sourceGroups = (root["subscriptionGroups"] as? JsonArray).orEmpty()
         val groupsBySourceId = sourceGroups.mapNotNull { value ->
@@ -68,12 +80,59 @@ object SubscriptionImportParser {
             Subscription(
                 username = username,
                 instanceUrl = instanceUrl,
-                // Refresh avatars through the selected instance instead of importing direct X URLs.
                 addedAt = created,
                 groupIds = memberships[user.string("id")].orEmpty().distinct()
             )
         }
         return SubscriptionImport(subscriptions, groupsBySourceId.values.toList(), skipped)
+    }
+
+    fun parseUsernameList(
+        content: String,
+        instanceUrl: String,
+        now: Long = System.currentTimeMillis()
+    ): SubscriptionImport {
+        ImportLimits.validate(content)
+        var skipped = 0
+        val seen = linkedSetOf<String>()
+        val subscriptions = mutableListOf<Subscription>()
+        for (token in tokenizeUsernames(content)) {
+            val username = token.trim().removePrefix("@")
+            if (username.isEmpty()) continue
+            if (!usernamePattern.matches(username)) {
+                skipped++
+                continue
+            }
+            val key = username.lowercase()
+            if (!seen.add(key)) continue
+            subscriptions += Subscription(username = username, instanceUrl = instanceUrl, addedAt = now)
+        }
+        require(subscriptions.isNotEmpty()) { "Unsupported subscriptions file" }
+        return SubscriptionImport(subscriptions, skipped = skipped)
+    }
+
+    fun encodeUsernameList(usernames: Collection<String>, separator: String = "\n"): String =
+        usernames
+            .map { it.trim().removePrefix("@") }
+            .filter { usernamePattern.matches(it) }
+            .distinctBy { it.lowercase() }
+            .joinToString(separator)
+
+    private fun tokenizeUsernames(content: String): Sequence<String> {
+        val withoutPath = content
+            .lineSequence()
+            .map { line ->
+                val trimmed = line.trim()
+                when {
+                    trimmed.startsWith("#") -> ""
+                    "://" in trimmed -> trimmed.substringAfterLast('/').substringBefore('?').substringBefore('#')
+                    else -> trimmed
+                }
+            }
+            .joinToString("\n")
+        return withoutPath.splitToSequence(',', '\n', '\r', ';', '+')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
     }
 
     private fun JsonObject.string(key: String): String? = (get(key) as? JsonPrimitive)?.contentOrNull

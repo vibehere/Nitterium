@@ -57,13 +57,13 @@ class InstancePickerTest {
         val builtIn = context.resources.getStringArray(R.array.default_instance_urls).first()
         var dismissed = false
         compose.setContent { MaterialTheme { InstancePicker(preferences) { dismissed = true } } }
-        compose.onNodeWithText(builtIn).assertExists()
+        compose.onNodeWithText(builtIn, substring = true).assertExists()
         // Add an instance after the chooser has opened; its list must update from DataStore.
         val later = "https://later-added.test"
         preferences.addCustomInstance(later)
         compose.waitForIdle()
-        compose.onNodeWithTag("instance_choices").performScrollToNode(hasText(later))
-        compose.onNodeWithText(later).assertIsDisplayed().performClick()
+        compose.onNodeWithTag("instance_choices").performScrollToNode(hasText(later, substring = true))
+        compose.onNodeWithTag("instance_$later").assertIsDisplayed().performClick()
         compose.waitUntil(5_000) { dismissed }
         assertEquals(later, preferences.instanceUrl.first())
     }

@@ -24,6 +24,10 @@ class FeedBatchAppendTest {
         assertTrue(script.contains("insertBefore"))
         assertTrue(script.contains("show-more"))
         assertTrue(script.contains("cursor"))
+        assertTrue(script.contains("/status/"))
+        assertTrue(script.contains("peerDelayMs"))
+        assertTrue(script.contains("concurrency"))
+        assertTrue(script.contains("loadPeerBatches"))
         assertFalse(script.contains("void(0)"))
     }
 

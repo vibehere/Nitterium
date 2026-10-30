@@ -11,6 +11,7 @@ import com.kaleedtc.nitterium.data.repository.FeedGroupRepository
 import com.kaleedtc.nitterium.data.repository.SubscriptionRepository
 import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
 import com.kaleedtc.nitterium.data.security.FeedBatchAppend
+import com.kaleedtc.nitterium.data.security.FeedBatchOrder
 import com.kaleedtc.nitterium.data.security.FeedChunkAssignment
 import com.kaleedtc.nitterium.data.security.FeedChunkFetcher
 import com.kaleedtc.nitterium.data.security.FeedPrivacyPartition
@@ -44,6 +45,7 @@ class FeedViewModel(
     private var multiPrimaryFallback: String = ""
     private var multiFrontend: FrontendType = FrontendType.NITTER
     private var shellFailoverAttempts = 0
+    private var lastFeedFingerprint: String? = null
 
     init {
         viewModelScope.launch {
@@ -150,6 +152,7 @@ class FeedViewModel(
     }
 
     fun setGroup(id: String?, name: String?) {
+        lastFeedFingerprint = null
         setState { copy(groupId = id, groupName = name) }
         batchIndex.value = 0
         shuffleSeed.value = System.nanoTime()
@@ -157,9 +160,10 @@ class FeedViewModel(
     }
 
     private fun rebuildFeed(filteredSubscriptions: List<Subscription>, inputs: FeedPlanInputs) {
-        multiFetchJob?.cancel()
-        multiFetchJob = null
         if (filteredSubscriptions.isEmpty()) {
+            multiFetchJob?.cancel()
+            multiFetchJob = null
+            lastFeedFingerprint = null
             batchUrls.value = emptyList()
             batchIndex.value = 0
             setState {
@@ -185,7 +189,54 @@ class FeedViewModel(
             return
         }
 
-        val usernames = filteredSubscriptions.map { it.username }
+        val active = FeedBatchOrder.activeUsernames(filteredSubscriptions)
+        if (active.isEmpty()) {
+            multiFetchJob?.cancel()
+            multiFetchJob = null
+            lastFeedFingerprint = null
+            batchUrls.value = emptyList()
+            batchIndex.value = 0
+            setState {
+                copy(
+                    hasSubscriptions = false,
+                    selectedInstanceUrl = inputs.instanceUrl,
+                    currentUrl = "",
+                    batchIndex = 0,
+                    batchCount = 0,
+                    appendBatchUrls = emptyList(),
+                    appendHtmlChunks = emptyList(),
+                    multiInstancesUsed = emptyList(),
+                    multiChunksLoaded = 0,
+                    multiChunksTotal = 0,
+                    multiLoadComplete = false,
+                    isLoading = false,
+                    isError = false,
+                    currentUsername = null,
+                    isSubscribed = false,
+                    avatarUrl = null
+                )
+            }
+            return
+        }
+        val usernames = FeedBatchOrder.orderForFeed(
+            usernames = active,
+            chunkSize = inputs.perBatch,
+            diversify = inputs.groupId == null
+        )
+        val fingerprint = feedFingerprint(filteredSubscriptions, inputs)
+        val snapshot = state.value
+        val keepSession = fingerprint == lastFeedFingerprint &&
+            snapshot.currentUrl.isNotBlank() &&
+            snapshot.hasSubscriptions &&
+            !snapshot.isRefreshing
+        if (keepSession) {
+            // Avatar/metadata-only subscription emits must not remount Feed All.
+            return
+        }
+        lastFeedFingerprint = fingerprint
+
+        multiFetchJob?.cancel()
+        multiFetchJob = null
         val pool = instancePool(inputs.instanceUrl, inputs.customInstances)
         val useMulti = inputs.spread && pool.isNotEmpty()
 
@@ -248,6 +299,35 @@ class FeedViewModel(
         applyBatchUrl(inputs.instanceUrl, resetBrowsing = false)
     }
 
+    private fun feedFingerprint(
+        filteredSubscriptions: List<Subscription>,
+        inputs: FeedPlanInputs
+    ): String {
+        val users = filteredSubscriptions.joinToString("\u0001") { sub ->
+            buildString {
+                append(sub.username.lowercase())
+                append('\u0002')
+                append(sub.groupIds.sorted().joinToString(","))
+                append('\u0002')
+                append(sub.hideRetweets)
+                append('\u0002')
+                append(sub.hideReplies)
+                append('\u0002')
+                append(sub.mutedInFeed)
+            }
+        }
+        return listOf(
+            users,
+            inputs.instanceUrl.trim().trimEnd('/').lowercase(),
+            inputs.groupId.orEmpty(),
+            inputs.frontend.name,
+            inputs.perBatch.toString(),
+            inputs.spread.toString(),
+            if (inputs.spread) inputs.seed.toString() else "0",
+            inputs.customInstances.map { it.lowercase() }.sorted().joinToString(",")
+        ).joinToString("\u0000")
+    }
+
     private fun bootstrapMultiFeed(
         assignments: List<FeedChunkAssignment>,
         pool: List<String>,
@@ -300,8 +380,8 @@ class FeedViewModel(
             }
 
             if (assignments.size <= 1) return@launch
-            delay(FeedBatchAppend.DEFAULT_DELAY_MS.toLong())
-            for (chunk in assignments.drop(1)) {
+            delay(FeedBatchAppend.INITIAL_DELAY_MS.toLong())
+            for ((index, chunk) in assignments.drop(1).withIndex()) {
                 if (!state.value.feedSpreadAcrossInstances) return@launch
                 val hostOrder = buildList {
                     add(chunk.instanceUrl)
@@ -333,7 +413,12 @@ class FeedViewModel(
                 } else {
                     setState { copy(multiChunksLoaded = multiChunksLoaded + 1) }
                 }
-                delay(FeedBatchAppend.DEFAULT_DELAY_MS.toLong())
+                val peerDelay = if (index < FeedBatchAppend.PEER_CONCURRENCY * 4) {
+                    FeedBatchAppend.INITIAL_DELAY_MS
+                } else {
+                    FeedBatchAppend.DEFAULT_DELAY_MS
+                }
+                delay(peerDelay.toLong())
             }
             setState { copy(multiLoadComplete = true) }
         }
@@ -491,8 +576,12 @@ class FeedViewModel(
         return urls.drop(index + 1)
     }
 
-    private fun isBrowsingAwayFromBatchRoot(snapshot: FeedState, @Suppress("UNUSED_PARAMETER") rootUrl: String): Boolean =
-        snapshot.currentUsername != null
+    private fun isBrowsingAwayFromBatchRoot(snapshot: FeedState, rootUrl: String): Boolean {
+        if (snapshot.currentUsername != null) return true
+        val page = snapshot.displayedPageUrl?.takeIf { it.isNotBlank() } ?: return false
+        if (!UrlPolicy.sameOrigin(snapshot.selectedInstanceUrl, page)) return false
+        return page.trimEnd('/') != rootUrl.trimEnd('/')
+    }
 
     override fun onEvent(event: FeedEvent) {
         when (event) {
@@ -559,6 +648,7 @@ class FeedViewModel(
                 }
             }
             is FeedEvent.Refresh -> {
+                lastFeedFingerprint = null
                 shuffleSeed.value = System.nanoTime()
                 setState {
                     copy(

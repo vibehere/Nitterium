@@ -668,6 +668,13 @@ fun NitterWebView(
                     val normalizedCurrent = currentUrl.trimEnd('/')
                     val normalizedTarget = url.trimEnd('/')
                     if (normalizedCurrent != normalizedTarget) {
+                        // Keep in-WebView status/profile history; Back uses goBack() instead of remounting Feed All.
+                        if (wv.canGoBack() &&
+                            UrlPolicy.sameOrigin(latestInstance, currentUrl) &&
+                            UrlPolicy.sameOrigin(latestInstance, url)
+                        ) {
+                            return@LaunchedEffect
+                        }
                         wv.loadPrivacyUrl(url)
                     }
                 }
@@ -746,7 +753,15 @@ fun NitterWebView(
                                 latestOnPageError(-1, "Blocked navigation outside the selected instance")
                                 return
                             }
-                            view?.alpha = 0f
+                            // Avoid a blank flash when returning to Feed All via history.
+                            val history = view?.copyBackForwardList()
+                            val isHistoryReturn = history != null && history.size > 1 &&
+                                (0 until history.currentIndex).any {
+                                    history.getItemAtIndex(it)?.url == url
+                                }
+                            if (!isHistoryReturn) {
+                                view?.alpha = 0f
+                            }
                             url?.let { latestOnPageStarted(it) }
                         }
 

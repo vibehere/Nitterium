@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
@@ -51,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
+import com.kaleedtc.nitterium.data.frontend.FrontendAdapter
 import com.kaleedtc.nitterium.data.frontend.FrontendType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,11 +67,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kaleedtc.nitterium.R
+import com.kaleedtc.nitterium.data.security.UrlPolicy
 import androidx.core.net.toUri
 
 import android.os.Build
@@ -237,6 +242,25 @@ fun AppSettingsList(
     ) {
         item {
             Text(
+                text = stringResource(R.string.privacy),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsSwitch(
+                label = stringResource(R.string.block_direct_x),
+                checked = state.isBlockDirectXEnabled,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateBlockDirectX(it)) },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.block_direct_x),
+                        description = stringResource(R.string.block_direct_x_description)
+                    )
+                }
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
                 text = stringResource(R.string.network),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
@@ -244,6 +268,18 @@ fun AppSettingsList(
             Spacer(modifier = Modifier.height(8.dp))
 
             val (expanded, setExpanded) = remember { mutableStateOf(false) }
+            val builtIn = stringArrayResource(R.array.default_instance_urls).toList()
+            val torFriendly = stringArrayResource(R.array.tor_friendly_instance_urls).toList()
+            val torLabel = stringResource(R.string.instance_tor_label)
+            val torFriendlyLabel = stringResource(R.string.instance_tor_friendly_label)
+            val groupedInstances = remember(state.availableInstances, state.customInstances, torFriendly, builtIn) {
+                UrlPolicy.groupedInstanceChoices(
+                    builtIn = builtIn,
+                    custom = state.customInstances,
+                    selected = state.instanceUrl,
+                    torFriendly = torFriendly
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -259,6 +295,12 @@ fun AppSettingsList(
                         value = state.instanceUrl,
                         onValueChange = { onEvent(SettingsEvent.UpdateInstanceUrl(it)) },
                         label = { Text(stringResource(R.string.nitter_instance_url)) },
+                        supportingText = {
+                            val host = UrlPolicy.displayHost(state.instanceUrl)
+                            if (host.isNotBlank() && host != state.instanceUrl) {
+                                Text(host)
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
@@ -271,28 +313,70 @@ fun AppSettingsList(
                         expanded = expanded,
                         onDismissRequest = { setExpanded(false) }
                     ) {
-                        state.availableInstances.forEach { instance ->
+                        groupedInstances.forEach { (group, instances) ->
+                            val groupLabel = when (group) {
+                                UrlPolicy.InstanceGroup.TorFriendly -> stringResource(R.string.instance_group_tor_friendly)
+                                UrlPolicy.InstanceGroup.Public -> stringResource(R.string.instance_group_public)
+                                UrlPolicy.InstanceGroup.Onion -> stringResource(R.string.instance_group_onion)
+                                UrlPolicy.InstanceGroup.Custom -> stringResource(R.string.instance_group_custom)
+                            }
                             DropdownMenuItem(
-                                text = { Text(instance) },
-                                onClick = {
-                                    onEvent(SettingsEvent.UpdateInstanceUrl(instance))
-                                    setExpanded(false)
+                                text = {
+                                    Text(
+                                        groupLabel,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 },
-                                trailingIcon = if (state.customInstances.contains(instance)) {
-                                    {
-                                        IconButton(onClick = {
-                                            onEvent(SettingsEvent.RemoveCustomInstance(instance))
-                                            // Optional: Don't close the menu if you want them to keep managing
-                                        }) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = stringResource(R.string.remove),
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
-                                        }
-                                    }
-                                } else null
+                                onClick = {},
+                                enabled = false
                             )
+                            instances.forEach { instance ->
+                                val badge = when (group) {
+                                    UrlPolicy.InstanceGroup.Onion -> torLabel
+                                    UrlPolicy.InstanceGroup.TorFriendly -> torFriendlyLabel
+                                    UrlPolicy.InstanceGroup.Public, UrlPolicy.InstanceGroup.Custom -> null
+                                }
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                UrlPolicy.displayHost(instance),
+                                                style = MaterialTheme.typography.bodyLarge
+                                            )
+                                            Text(
+                                                instance,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (badge != null) {
+                                                Text(
+                                                    badge,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        onEvent(SettingsEvent.UpdateInstanceUrl(instance))
+                                        setExpanded(false)
+                                    },
+                                    trailingIcon = if (state.customInstances.contains(instance)) {
+                                        {
+                                            IconButton(onClick = {
+                                                onEvent(SettingsEvent.RemoveCustomInstance(instance))
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = stringResource(R.string.remove),
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            }
+                                        }
+                                    } else null
+                                )
+                            }
                         }
                     }
                 }
@@ -309,6 +393,22 @@ fun AppSettingsList(
                 }
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+            var keyInput by rememberSaveable(state.instanceUrl) { mutableStateOf(state.instanceKey) }
+            LaunchedEffect(state.instanceKey, state.instanceUrl) {
+                keyInput = state.instanceKey
+            }
+            OutlinedTextField(
+                value = keyInput,
+                onValueChange = {
+                    keyInput = it
+                    onEvent(SettingsEvent.UpdateInstanceKey(it))
+                },
+                label = { Text(stringResource(R.string.instance_access_key)) },
+                placeholder = { Text(stringResource(R.string.instance_access_key_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
             Spacer(modifier = Modifier.height(8.dp))
             var frontendExpanded by remember { mutableStateOf(false) }
             ExposedDropdownMenuBox(expanded = frontendExpanded, onExpandedChange = { frontendExpanded = it }) {
@@ -328,12 +428,148 @@ fun AppSettingsList(
                 ExposedDropdownMenu(expanded = frontendExpanded, onDismissRequest = { frontendExpanded = false }) {
                     FrontendType.entries.forEach { type ->
                         DropdownMenuItem(
-                            text = { Text(if (type == FrontendType.AUTO) stringResource(R.string.frontend_auto) else if (type == FrontendType.TEAPOT) "Teapot" else "Nitter") },
-                            onClick = { onEvent(SettingsEvent.UpdateFrontend(type)); frontendExpanded = false }
+                            text = {
+                                Text(
+                                    if (type == FrontendType.AUTO) stringResource(R.string.frontend_auto)
+                                    else if (type == FrontendType.TEAPOT) "Teapot"
+                                    else "Nitter"
+                                )
+                            },
+                            onClick = {
+                                onEvent(SettingsEvent.UpdateFrontend(type))
+                                frontendExpanded = false
+                            }
                         )
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = stringResource(R.string.socks_proxy),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsSwitch(
+                label = stringResource(R.string.socks_proxy_enable),
+                checked = state.socksProxy.enabled,
+                onCheckedChange = {
+                    onEvent(SettingsEvent.UpdateSocksProxy(state.socksProxy.copy(enabled = it)))
+                },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.socks_proxy),
+                        description = stringResource(R.string.socks_proxy_description)
+                    )
+                }
+            )
+            if (state.socksProxy.enabled) {
+                Text(
+                    text = stringResource(R.string.socks_proxy_system_tor_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                var host by remember(state.socksProxy.host) { mutableStateOf(state.socksProxy.host) }
+                var portText by remember(state.socksProxy.port) {
+                    mutableStateOf(state.socksProxy.port.toString())
+                }
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = { Text(stringResource(R.string.socks_proxy_host)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = portText,
+                    onValueChange = { portText = it.filter { ch -> ch.isDigit() }.take(5) },
+                    label = { Text(stringResource(R.string.socks_proxy_port)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                TextButton(
+                    onClick = {
+                        val port = portText.toIntOrNull() ?: state.socksProxy.port
+                        onEvent(
+                            SettingsEvent.UpdateSocksProxy(
+                                state.socksProxy.copy(host = host.trim(), port = port)
+                            )
+                        )
+                    }
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+                SettingsSwitch(
+                    label = stringResource(R.string.socks_proxy_images),
+                    checked = state.socksProxy.proxyImages,
+                    onCheckedChange = {
+                        onEvent(SettingsEvent.UpdateSocksProxy(state.socksProxy.copy(proxyImages = it)))
+                    },
+                    icon = {
+                        SettingsInfoIcon(
+                            title = stringResource(R.string.socks_proxy_images),
+                            description = stringResource(R.string.socks_proxy_images_description)
+                        )
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        item {
+            Text(
+                text = stringResource(R.string.feed_loading),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            var batchText by remember(state.feedUsersPerBatch) {
+                mutableStateOf(state.feedUsersPerBatch.toString())
+            }
+            OutlinedTextField(
+                value = batchText,
+                onValueChange = { raw ->
+                    val digits = raw.filter { it.isDigit() }.take(2)
+                    batchText = digits
+                    digits.toIntOrNull()?.let { size ->
+                        if (size in FrontendAdapter.MIN_USERS_PER_BATCH..FrontendAdapter.MAX_USERS_PER_BATCH) {
+                            onEvent(SettingsEvent.UpdateFeedUsersPerBatch(size))
+                        }
+                    }
+                },
+                label = { Text(stringResource(R.string.feed_users_per_batch)) },
+                supportingText = {
+                    Text(
+                        stringResource(
+                            R.string.feed_users_per_batch_range,
+                            FrontendAdapter.MIN_USERS_PER_BATCH,
+                            FrontendAdapter.MAX_USERS_PER_BATCH
+                        )
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = stringResource(R.string.feed_users_per_batch_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            )
+            SettingsSwitch(
+                label = stringResource(R.string.feed_spread_across_instances),
+                checked = state.feedSpreadAcrossInstances,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateFeedSpreadAcrossInstances(it)) },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.feed_spread_across_instances),
+                        description = stringResource(R.string.feed_spread_across_instances_description)
+                    )
+                }
+            )
             Spacer(modifier = Modifier.height(24.dp))
         }
 
@@ -344,90 +580,8 @@ fun AppSettingsList(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(8.dp))
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                SettingsSwitch(
-                    label = stringResource(R.string.dynamic_color),
-                    checked = state.isDynamicColor,
-                    onCheckedChange = { onEvent(SettingsEvent.UpdateDynamicColor(it)) }
-                )
-            }
-
-            SettingsSwitch(
-                label = stringResource(R.string.true_black),
-                checked = state.isTrueBlack,
-                onCheckedChange = { onEvent(SettingsEvent.UpdateTrueBlack(it)) }
-            )
-
-            SettingsSwitch(
-                label = stringResource(R.string.show_nav_labels),
-                checked = state.isNavLabelsEnabled,
-                onCheckedChange = { onEvent(SettingsEvent.UpdateNavLabels(it)) }
-            )
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-
-            val (tabExpanded, setTabExpanded) = remember { mutableStateOf(false) }
-            val availableTabs = listOf("Search", "Subscriptions", "Feed")
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ExposedDropdownMenuBox(
-                    expanded = tabExpanded,
-                    onExpandedChange = setTabExpanded,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = state.defaultTab,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text(stringResource(R.string.default_tab)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-                        singleLine = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tabExpanded) },
-                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-                    )
-
-                    ExposedDropdownMenu(
-                        expanded = tabExpanded,
-                        onDismissRequest = { setTabExpanded(false) }
-                    ) {
-                        availableTabs.forEach { tab ->
-                            DropdownMenuItem(
-                                text = { Text(tab) },
-                                onClick = {
-                                    onEvent(SettingsEvent.UpdateDefaultTab(tab))
-                                    setTabExpanded(false)
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SettingsSwitch(
-                label = stringResource(R.string.block_direct_x),
-                checked = state.isBlockDirectXEnabled,
-                onCheckedChange = { onEvent(SettingsEvent.UpdateBlockDirectX(it)) },
-                icon = {
-                    SettingsInfoIcon(
-                        title = stringResource(R.string.block_direct_x),
-                        description = stringResource(R.string.block_direct_x_description)
-                    )
-                }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
             Text(text = stringResource(R.string.theme_mode), style = MaterialTheme.typography.bodyLarge)
         }
-
         item {
             ThemeOption(
                 label = stringResource(R.string.system_default),
@@ -448,6 +602,83 @@ fun AppSettingsList(
                 selected = state.isDarkTheme == true,
                 onClick = { onEvent(SettingsEvent.UpdateDarkTheme(true)) }
             )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        item {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                SettingsSwitch(
+                    label = stringResource(R.string.dynamic_color),
+                    checked = state.isDynamicColor,
+                    onCheckedChange = { onEvent(SettingsEvent.UpdateDynamicColor(it)) }
+                )
+            }
+
+            SettingsSwitch(
+                label = stringResource(R.string.true_black),
+                checked = state.isTrueBlack,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateTrueBlack(it)) }
+            )
+            if (state.isTrueBlack && state.isDarkTheme == false) {
+                Text(
+                    text = stringResource(R.string.true_black_light_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+
+            SettingsSwitch(
+                label = stringResource(R.string.show_nav_labels),
+                checked = state.isNavLabelsEnabled,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateNavLabels(it)) }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val (tabExpanded, setTabExpanded) = remember { mutableStateOf(false) }
+            val availableTabs = listOf(
+                "Search" to stringResource(R.string.nav_search),
+                "Subscriptions" to stringResource(R.string.nav_subscriptions),
+                "Feed" to stringResource(R.string.nav_feed),
+                "FeedAll" to stringResource(R.string.default_tab_feed_all)
+            )
+            val defaultTabLabel = availableTabs.firstOrNull { it.first == state.defaultTab }?.second
+                ?: state.defaultTab
+
+            ExposedDropdownMenuBox(
+                expanded = tabExpanded,
+                onExpandedChange = setTabExpanded,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = defaultTabLabel,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(stringResource(R.string.default_tab)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                    singleLine = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tabExpanded) },
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                )
+
+                ExposedDropdownMenu(
+                    expanded = tabExpanded,
+                    onDismissRequest = { setTabExpanded(false) }
+                ) {
+                    availableTabs.forEach { (tab, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                onEvent(SettingsEvent.UpdateDefaultTab(tab))
+                                setTabExpanded(false)
+                            }
+                        )
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
 
@@ -503,6 +734,7 @@ fun AppSettingsList(
                 onClick = { onEvent(SettingsEvent.OpenUrl(developerUrl)) }
             )
         }
+
     }
 }
 
@@ -536,6 +768,37 @@ fun InstanceSettingsList(
     state: SettingsState,
     onEvent: (SettingsEvent) -> Unit
 ) {
+    var showClearCookiesDialog by remember { mutableStateOf(false) }
+    if (showClearCookiesDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearCookiesDialog = false },
+            title = { Text(stringResource(R.string.clear_instance_cookies_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.clear_instance_cookies_confirm_message,
+                        state.instanceUrl
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onEvent(SettingsEvent.ClearInstanceCookies)
+                        showClearCookiesDialog = false
+                    }
+                ) {
+                    Text(stringResource(R.string.clear_instance_cookies))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCookiesDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -587,17 +850,103 @@ fun InstanceSettingsList(
                 checked = state.instanceSettings.hidePins,
                 onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("hidePins", it)) }
             )
-            
+            SettingsSwitch(
+                label = stringResource(R.string.hide_retweets),
+                checked = state.instanceSettings.hideRetweets,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("hideRetweets", it)) },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.hide_retweets),
+                        description = stringResource(R.string.hide_retweets_description)
+                    )
+                }
+            )
+            SettingsSwitch(
+                label = stringResource(R.string.hide_replies),
+                checked = state.instanceSettings.hideReplies,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("hideReplies", it)) }
+            )
+            SettingsSwitch(
+                label = stringResource(R.string.hide_community_notes),
+                checked = state.instanceSettings.hideCommunityNotes,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("hideCommunityNotes", it)) }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.muted_words),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                text = stringResource(R.string.muted_words_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            var mutedWordInput by rememberSaveable { mutableStateOf("") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = mutedWordInput,
+                    onValueChange = { mutedWordInput = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.muted_words_hint)) }
+                )
+                TextButton(
+                    onClick = {
+                        val word = mutedWordInput.trim()
+                        if (word.isNotEmpty()) {
+                            onEvent(SettingsEvent.AddMutedWord(word))
+                            mutedWordInput = ""
+                        }
+                    },
+                    enabled = mutedWordInput.isNotBlank()
+                ) {
+                    Text(stringResource(R.string.muted_words_add))
+                }
+            }
+            if (state.mutedWords.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.muted_words_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else {
+                state.mutedWords.forEach { word ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(word, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { onEvent(SettingsEvent.RemoveMutedWord(word)) }) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = stringResource(R.string.muted_words_remove, word)
+                            )
+                        }
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
 
         item {
             Text(
-                text = stringResource(R.string.appearance),
+                text = stringResource(R.string.page_layout),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(8.dp))
+            SettingsSwitch(
+                label = stringResource(R.string.sticky_profile),
+                checked = state.instanceSettings.stickyProfile ?: true,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("stickyProfile", it)) }
+            )
             SettingsSwitch(
                 label = stringResource(R.string.square_avatars),
                 checked = state.instanceSettings.squareAvatars ?: (state.frontend == FrontendType.TEAPOT),
@@ -626,28 +975,41 @@ fun InstanceSettingsList(
                 checked = state.instanceSettings.hlsPlayback,
                 onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("hlsPlayback", it)) }
             )
+            val mediaProxyLocked = state.isBlockDirectXEnabled
             SettingsSwitch(
                 label = stringResource(if (state.frontend == FrontendType.TEAPOT) R.string.proxy_media else R.string.proxy_videos),
-                checked = state.instanceSettings.proxyVideos,
+                checked = state.instanceSettings.proxyVideos || mediaProxyLocked,
+                enabled = !mediaProxyLocked,
                 onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("proxyVideos", it)) },
                 icon = {
                     SettingsInfoIcon(
                         title = stringResource(if (state.frontend == FrontendType.TEAPOT) R.string.proxy_media else R.string.proxy_videos),
-                        description = stringResource(if (state.frontend == FrontendType.TEAPOT) R.string.proxy_media_description else R.string.proxy_videos_description)
+                        description = stringResource(
+                            if (state.frontend == FrontendType.TEAPOT) R.string.proxy_media_description
+                            else R.string.proxy_videos_description
+                        )
                     )
                 }
             )
+            if (mediaProxyLocked) {
+                Text(
+                    text = stringResource(R.string.proxy_locked_by_block_x),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
             SettingsSwitch(
                 label = stringResource(R.string.mute_videos),
                 checked = state.instanceSettings.muteVideos,
                 onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("muteVideos", it)) }
             )
-             SettingsSwitch(
+            SettingsSwitch(
                 label = stringResource(R.string.autoplay_gifs),
                 checked = state.instanceSettings.autoplayGifs,
                 onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("autoplayGifs", it)) }
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
         }
 
@@ -658,11 +1020,26 @@ fun InstanceSettingsList(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             SettingsSwitch(
                 label = stringResource(R.string.infinite_scroll),
                 checked = state.instanceSettings.infiniteScroll,
-                onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("infiniteScroll", it)) }
+                onCheckedChange = { onEvent(SettingsEvent.UpdateInstanceSetting("infiniteScroll", it)) },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.infinite_scroll),
+                        description = stringResource(R.string.infinite_scroll_description)
+                    )
+                }
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            TextButton(onClick = { showClearCookiesDialog = true }) {
+                Text(stringResource(R.string.clear_instance_cookies))
+            }
+            Text(
+                text = stringResource(R.string.clear_instance_cookies_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -728,6 +1105,7 @@ fun SettingsSwitch(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
     icon: (@Composable () -> Unit)? = null
 ) {
     Row(
@@ -736,6 +1114,7 @@ fun SettingsSwitch(
             .toggleable(
                 value = checked,
                 onValueChange = onCheckedChange,
+                enabled = enabled,
                 role = Role.Switch
             )
             .padding(vertical = 8.dp),
@@ -744,6 +1123,11 @@ fun SettingsSwitch(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            },
             modifier = Modifier.weight(1f)
         )
         if (icon != null) {
@@ -751,7 +1135,8 @@ fun SettingsSwitch(
         }
         Switch(
             checked = checked,
-            onCheckedChange = null
+            onCheckedChange = null,
+            enabled = enabled
         )
     }
 }

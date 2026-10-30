@@ -119,7 +119,7 @@ class InstanceSwitchingTest {
         prepare()
         subscriptions.addSubscription(Subscription("alice", old, groupIds = listOf("news")))
         subscriptions.addSubscription(Subscription("bob", old, groupIds = listOf("tech")))
-        val model = create { FeedViewModel(preferences, subscriptions, connection) }
+        val model = create { FeedViewModel(preferences, subscriptions, connection, groups) }
         instrumentation.runOnMainSync { model.setGroup("news", "News") }
         await { model.state.value.currentUrl == "$old/alice" }
         val path = "/alice?cursor=one%2Ftwo"

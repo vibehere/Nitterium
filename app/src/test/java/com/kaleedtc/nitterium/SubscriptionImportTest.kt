@@ -42,4 +42,39 @@ class SubscriptionImportTest {
             assertTrue(runCatching { SubscriptionImportParser.parse(file, "https://example.com") }.isFailure)
         }
     }
+
+    @Test fun importsNitterStyleUsernameLists() {
+        val newlines = SubscriptionImportParser.parse(
+            "# friends\nalice\n@Bob\nalice\nbad name\n",
+            "https://nitter.example",
+            now = 99
+        )
+        assertEquals(listOf("alice", "Bob"), newlines.subscriptions.map { it.username })
+        assertEquals(1, newlines.skipped)
+        assertEquals(99L, newlines.subscriptions.first().addedAt)
+
+        val commas = SubscriptionImportParser.parse(
+            "https://nitter.example/carol,dave,eve",
+            "https://instance.example"
+        )
+        assertEquals(listOf("carol", "dave", "eve"), commas.subscriptions.map { it.username })
+
+        assertEquals(
+            "alice\nbob",
+            SubscriptionImportParser.encodeUsernameList(listOf("@alice", "bob", "alice", "!!"))
+        )
+        assertEquals(
+            "alice,bob",
+            SubscriptionImportParser.encodeUsernameList(listOf("alice", "bob"), separator = ",")
+        )
+    }
+
+    @Test fun backupCodecAcceptsNitterUsernameLists() {
+        val backup = com.kaleedtc.nitterium.data.model.BackupCodec.decode(
+            "alice,bob\ncarol",
+            "https://nitter.example"
+        )
+        assertEquals(listOf("alice", "bob", "carol"), backup.subscriptions!!.map { it.username })
+        assertNull(backup.settings)
+    }
 }

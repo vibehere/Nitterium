@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
+import com.kaleedtc.nitterium.R
 import com.kaleedtc.nitterium.data.frontend.FrontendType
 import com.kaleedtc.nitterium.data.frontend.InstanceSettingsCookies
 import com.kaleedtc.nitterium.ui.common.LocalFullScreenMode
@@ -28,6 +29,7 @@ class InstanceOptionsTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun teapotShowsAppearanceAndIndependentPlaybackControls() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         val state = mutableStateOf(SettingsState(
             isLoading = false, frontend = FrontendType.TEAPOT,
             instanceSettings = InstanceSettingsCookies.read("", FrontendType.TEAPOT)
@@ -45,8 +47,8 @@ class InstanceOptionsTest {
                 })
             }
         }
-        compose.onNodeWithText("Instance Options").performClick()
-        compose.onNodeWithText("Make profile sidebar stick to top").assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.instance_options)).performClick()
+        compose.onNodeWithText("Sticky profile sidebar").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Square profile pictures").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(SettingsEvent.UpdateInstanceSetting("squareAvatars", false), events.last()) }
         compose.onNodeWithText("HLS Playback").performScrollTo().performClick()
@@ -60,18 +62,32 @@ class InstanceOptionsTest {
             assertEquals(true, state.value.instanceSettings.teapotHlsPlayback)
         }
         compose.onNodeWithText("Proxy images and videos").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Hide Retweets").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(SettingsEvent.UpdateInstanceSetting("hideRetweets", true), events.last())
+            assertTrue(state.value.instanceSettings.hideRetweets)
+        }
+        compose.onNodeWithText("Hide Tweet Replies").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(SettingsEvent.UpdateInstanceSetting("hideReplies", true), events.last())
+        }
+        compose.onNodeWithText("Sticky profile sidebar").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun nitterKeepsItsExistingPlaybackControlAndNewAppearanceOptions() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         compose.setContent {
             NitteriumTheme {
                 SettingsContent(SettingsState(isLoading = false, frontend = FrontendType.NITTER,
                     instanceSettings = InstanceSettingsCookies.read("", FrontendType.NITTER)), {})
             }
         }
-        compose.onNodeWithText("Instance Options").performClick()
-        compose.onNodeWithText("Make profile sidebar stick to top").assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.instance_options)).performClick()
+        compose.onNodeWithText("Sticky profile sidebar").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Square profile pictures").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Hide Retweets").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Hide Community Notes").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Clear instance cookies").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("HLS Playback").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("MP4 playback").assertDoesNotExist()
     }
@@ -91,6 +107,21 @@ class InstanceOptionsTest {
             assertFalse(restored.hlsPlayback)
             assertEquals(true, restored.teapotHlsPlayback)
             assertFalse(store.setOption(origin, FrontendType.TEAPOT, "unknown", true))
+        }
+    }
+
+    @Test fun clearAndResetRemovesFiltersAndRestoresPlaybackDefaults() {
+        val store = CookieInstanceOptionsStore()
+        val origin = "https://instance-options-clear.test"
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            assertTrue(store.setOption(origin, FrontendType.NITTER, "hideReplies", true))
+            assertTrue(store.setOption(origin, FrontendType.NITTER, "hideCommunityNotes", true))
+            assertTrue(store.setOption(origin, FrontendType.NITTER, "hlsPlayback", false))
+            val reset = store.clearAndReset(origin, FrontendType.NITTER)
+            assertFalse(reset.hideReplies)
+            assertFalse(reset.hideCommunityNotes)
+            assertTrue(reset.hlsPlayback)
+            assertFalse(reset.proxyVideos)
         }
     }
 

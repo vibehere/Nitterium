@@ -19,6 +19,17 @@
     <!-- Feed Screen -->
     <string name="no_subscriptions_feed">You haven\'t subscribed to anyone yet.</string>
     <string name="retweeted_by">Retweeted by %1$s</string>
+    <string name="feed_multi_count">%1$d Nitters</string>
+    <string name="feed_multi_count_loading">%1$d Nitters…</string>
+    <string name="feed_multi_status_title">Instances used</string>
+    <string name="feed_multi_status_shell">Shell (open page)</string>
+    <string name="feed_multi_status_chunk">Also loaded from</string>
+    <string name="feed_multi_status_progress">Chunks loaded: %1$d of %2$d</string>
+    <string name="feed_multi_status_probing">Looking for a working instance…</string>
+    <string name="feed_multi_status_done">All chunks finished</string>
+    <string name="feed_multi_status_loading">Still loading more chunks…</string>
+    <string name="feed_multi_status_close">Close</string>
+    <string name="feed_multi_instances_cd">Show which Nitter instances this feed used</string>
 
     <!-- Search Screen -->
     <string name="search_nitter">Search tweets</string>
@@ -62,6 +73,32 @@
     <string name="all">All</string>
     <string name="assign_to_groups">Assign to Groups</string>
     <string name="no_groups_created">No groups created yet. Go to Feed to create one!</string>
+    <string name="manage_group_members">Manage members</string>
+    <string name="edit_group_action">Edit group</string>
+    <string name="delete_group_title">Delete group?</string>
+    <string name="delete_group_message">Delete \"%1$s\"? Subscriptions stay saved but leave this group.</string>
+    <string name="group_members_title">Members of %1$s</string>
+    <string name="no_subscriptions_for_group">Subscribe to profiles first, then assign them here.</string>
+    <string name="group_members_saved">Group members saved</string>
+    <string name="group_members_save_failed">Could not save group members. Please try again.</string>
+    <string name="groups_select">Select groups</string>
+    <string name="groups_select_all">Select all</string>
+    <plurals name="groups_selected_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <string name="delete_groups_title">Delete groups?</string>
+    <plurals name="delete_groups_message">
+        <item quantity="one">Delete %d group? Subscriptions stay saved but leave this group.</item>
+        <item quantity="other">Delete %d groups? Subscriptions stay saved but leave these groups.</item>
+    </plurals>
+    <string name="groups_deleted">Groups deleted</string>
+    <string name="groups_export_title">Export selected groups</string>
+    <string name="groups_export_description">Nitterium JSON keeps group names and memberships. A username list matches how Nitter multi-user feeds are shared (one name per line).</string>
+    <string name="groups_export_json">Nitterium JSON</string>
+    <string name="groups_export_username_list">Username list (Nitter-style)</string>
+    <string name="groups_import_success">Imported into selected groups</string>
+    <string name="groups_import_failed">Could not import into the selected groups. Check the file and try again.</string>
 
     <!-- Settings Screen -->
     <string name="app_settings">App Settings</string>
@@ -79,7 +116,7 @@
     <string name="backup_everything_description">Subscriptions, groups, group assignments, and settings.</string>
     <string name="backup_create">Create backup</string>
     <string name="backup_restore_file">Restore from file</string>
-    <string name="backup_restore_description">Choose a backup to review its contents before restoring. Existing subscription exports and QuaX backups are also supported.</string>
+    <string name="backup_restore_description">Choose a backup to review before restoring. Supports Nitterium backups, subscription JSON, QuaX backups, and comma- or newline-separated username lists.</string>
     <string name="backup_restore_title">Restore backup?</string>
     <string name="backup_restore_confirm">Restore</string>
     <string name="backup_settings_included">App settings and saved instance options</string>
@@ -103,15 +140,40 @@
         <item quantity="one">%d group</item>
         <item quantity="other">%d groups</item>
     </plurals>
+    <string name="privacy">Privacy</string>
     <string name="network">Network</string>
+    <string name="socks_proxy">SOCKS proxy (Tor)</string>
+    <string name="socks_proxy_enable">Use SOCKS proxy</string>
+    <string name="socks_proxy_description">Routes the app through a local SOCKS proxy (default 127.0.0.1:9050). Start the proxy first—this app does not embed Tor. Leave off if a system Tor VPN already covers the device.</string>
+    <string name="socks_proxy_system_tor_note">Leave SOCKS off if a system Tor VPN is already active, to avoid routing loops.</string>
+    <string name="socks_proxy_host">Proxy host</string>
+    <string name="socks_proxy_port">Proxy port</string>
+    <string name="socks_proxy_images">Also proxy images</string>
+    <string name="socks_proxy_images_description">Send image downloads through the same SOCKS proxy. Separate from Instance → Proxy media.</string>
+    <string name="socks_proxy_invalid">Enter a valid host and port (1–65535).</string>
     <string name="nitter_instance_url">Instance URL (Nitter or Teapot)</string>
+    <string name="instance_access_key">Instance access key (optional)</string>
+    <string name="instance_access_key_hint">Sent to this instance only</string>
+    <string name="instance_key_imported">Access key saved for %1$s</string>
     <string name="appearance">Appearance</string>
+    <string name="page_layout">Page layout</string>
     <string name="dynamic_color">Dynamic Color</string>
     <string name="true_black">True Black (OLED)</string>
+    <string name="true_black_light_note">Only applies in dark theme.</string>
     <string name="show_nav_labels">Show Navigation Labels</string>
     <string name="default_tab">Default Tab</string>
+    <string name="default_tab_feed_all">Feed · All</string>
     <string name="block_direct_x">Block Direct Connections to X (Twitter)</string>
-    <string name="block_direct_x_description">If the chosen Nitter instance has media proxying disabled, turning this off will allow the app to fetch images and videos directly from X servers.</string>
+    <string name="block_direct_x_description">Blocks direct contact with X/Twitter CDNs and turns on instance media proxy so images and videos load through your Nitter.</string>
+    <string name="proxy_required_when_blocking_x">Media proxy must stay on while Block Direct X is enabled.</string>
+    <string name="proxy_locked_by_block_x">Required while Block Direct X is on.</string>
+    <string name="feed_loading">Feed All</string>
+    <string name="feed_users_per_batch">Accounts per request</string>
+    <string name="feed_users_per_batch_range">Enter a number from %1$d to %2$d</string>
+    <string name="feed_users_per_batch_description">How many usernames each Nitter request may include. Smaller chunks are harder to block; remaining accounts load into the same scroll automatically—no batch swiping.</string>
+    <string name="feed_spread_across_instances">Spread across instances</string>
+    <string name="feed_spread_across_instances_description">Split subscriptions into chunks and send each to a random available instance. Few hosts are reused at random. Refresh reshuffles. Chunks still merge into one timeline.</string>
+    <string name="feed_users_per_batch_value">%1$d accounts</string>
     <string name="theme_mode">Theme Mode</string>
     <string name="system_default">System Default</string>
     <string name="light">Light</string>
@@ -119,21 +181,44 @@
     <string name="global_settings_note">Options are saved for the selected instance. Reopen or refresh a page to apply changes.</string>
     <string name="square_avatars">Square profile pictures</string>
     <string name="add_custom_instance">Add Custom Instance</string>
-    <string name="custom_instance_url_hint">e.g., https://nitter.example.com</string>
     <string name="add">Add</string>
     <string name="remove">Remove</string>
     <string name="privacy_filtering">Privacy &amp; Filtering</string>
     <string name="hide_tweet_stats">Hide Tweet Stats</string>
     <string name="hide_profile_banner">Hide Profile Banner</string>
     <string name="hide_pinned_tweets">Hide Pinned Tweets</string>
+    <string name="hide_retweets">Hide Retweets</string>
+    <string name="hide_retweets_description">Hide retweets in timelines (applied in-app). Per-account overrides are in subscription options.</string>
+    <string name="subscription_filters">Feed filters</string>
+    <string name="subscription_filters_local_note">Stored only on this device. Instances never see these filters.</string>
+    <string name="filter_default">Default</string>
+    <string name="filter_hide">Hide</string>
+    <string name="filter_show">Show</string>
+    <string name="mute_in_feed">Mute in Feed All</string>
+    <string name="mute_in_feed_description">Hide this account\'s posts in combined feeds. You can still open their profile.</string>
+    <string name="muted_words">Muted words</string>
+    <string name="muted_words_description">Hide posts containing these phrases (local, case-insensitive). Stored on this device only.</string>
+    <string name="muted_words_hint">Add a word or phrase</string>
+    <string name="muted_words_add">Add</string>
+    <string name="muted_words_empty">No muted words yet</string>
+    <string name="muted_words_remove">Remove %1$s</string>
+    <string name="hide_replies">Hide Tweet Replies</string>
+    <string name="hide_community_notes">Hide Community Notes</string>
+    <string name="sticky_profile">Sticky profile sidebar</string>
+    <string name="clear_instance_cookies">Clear instance cookies</string>
+    <string name="clear_instance_cookies_description">Reset this instance’s saved preferences. Refresh open pages after. Does not clear muted words; media proxy returns if Block Direct X is on.</string>
+    <string name="clear_instance_cookies_confirm_title">Clear cookies?</string>
+    <string name="clear_instance_cookies_confirm_message">This resets theme and filter cookies for %1$s on this device.</string>
+    <string name="instance_cookies_cleared">Instance cookies cleared</string>
     <string name="media_playback">Media &amp; Playback</string>
     <string name="hls_playback">HLS Playback</string>
-    <string name="proxy_videos">Proxy Videos</string>
-    <string name="proxy_videos_description">Proxy video streaming through the server. Note: If disabled, you must disable "Block Direct Connections to X" to play videos directly from X servers!</string>
+    <string name="proxy_videos">Proxy media through instance</string>
+    <string name="proxy_videos_description">Load images and videos through the instance instead of X. Required when Block Direct X is on.</string>
     <string name="mute_videos">Mute Videos</string>
     <string name="autoplay_gifs">Autoplay GIFs</string>
     <string name="navigation">Navigation</string>
     <string name="infinite_scroll">Infinite Scroll</string>
+    <string name="infinite_scroll_description">Load more posts as you scroll on this instance’s pages. Separate from Feed All continuous loading.</string>
 
     <!-- About Section -->
     <string name="about">About</string>
@@ -156,18 +241,45 @@
 
 
     <string name="xitter_url" translatable="false">https://xitter.cf</string>
+    <string name="nitter_mie_foundation_url" translatable="false">https://nitter.mie.foundation</string>
+    <string name="nitter_netbub_url" translatable="false">https://nitter.netbub.com</string>
+    <string name="nitter_tiekoetter_url" translatable="false">https://nitter.tiekoetter.com</string>
+    <string name="nitter_jaydenha_url" translatable="false">https://nitter.jaydenha.uk</string>
+    <string name="nitter_pp_ua_url" translatable="false">https://nitter.pp.ua</string>
     <string name="shitter_thepixora_url" translatable="false">https://shitter.thepixora.com</string>
-    <string name="shitter_netbub_url" translatable="false">https://nitter.netbub.com</string>
-    <string name="shitter_pp_ua_url" translatable="false">https://nitter.pp.ua</string>
-    <string name="nitter_kareem_one_url" translatable="false">https://nitter.kareem.one</string>
-    <string name="nitter_net_url" translatable="false">https://nitter.net</string>
+    <string name="nitter_mizuki_url" translatable="false">https://nitter.mizuki.st</string>
+    <string name="nitter_r4fo_url" translatable="false">https://nitter.r4fo.com</string>
+    <string name="nitter_xitter_cc_url" translatable="false">https://nitter.xitter.cc</string>
+    <string name="nitter_onion_lesbo_url" translatable="false">http://nitter.lesboswza6waq3itqo46rvf5a7dibxih32f2umwg6fpssxj66spmclyd.onion</string>
+    <string name="nitter_onion_dhgj_url" translatable="false">http://dhgjnhkxtgesvcddfwzqm4d4zmyz2x2jud6huweu5iywuvoo7qaqpjid.onion</string>
+    <string name="nitter_onion_catsarch_url" translatable="false">http://nitter.catsarchywsyuss6jdxlypsw5dc7owd5u5tr6bujxb7o6xw2hipqehyd.onion</string>
+    <string name="instance_tor_label">Tor</string>
+    <string name="instance_tor_friendly_label">Tor-friendly</string>
+    <string name="instance_picker_subtitle">Pick a working frontend. Tor-friendly hosts skip bot checks.</string>
+    <string name="instance_group_tor_friendly">Tor-friendly</string>
+    <string name="instance_group_public">Public</string>
+    <string name="instance_group_onion">Tor (.onion)</string>
+    <string name="instance_group_custom">Custom</string>
+    <string name="custom_instance_url_hint">HTTPS instance or http://….onion</string>
+    <string name="instance_url_invalid">Use an HTTPS URL or an http://….onion Tor address (no credentials)</string>
     <string-array name="default_instance_urls" translatable="false">
         <item>@string/xitter_url</item>
+        <item>@string/nitter_mie_foundation_url</item>
+        <item>@string/nitter_netbub_url</item>
+        <item>@string/nitter_tiekoetter_url</item>
+        <item>@string/nitter_jaydenha_url</item>
+        <item>@string/nitter_pp_ua_url</item>
         <item>@string/shitter_thepixora_url</item>
-        <item>@string/shitter_netbub_url</item>
-        <item>@string/shitter_pp_ua_url</item>
-        <item>@string/nitter_kareem_one_url</item>
-        <item>@string/nitter_net_url</item>
+        <item>@string/nitter_mizuki_url</item>
+        <item>@string/nitter_r4fo_url</item>
+        <item>@string/nitter_xitter_cc_url</item>
+        <item>@string/nitter_onion_lesbo_url</item>
+        <item>@string/nitter_onion_dhgj_url</item>
+        <item>@string/nitter_onion_catsarch_url</item>
+    </string-array>
+    <string-array name="tor_friendly_instance_urls" translatable="false">
+        <item>@string/xitter_url</item>
+        <item>@string/nitter_mie_foundation_url</item>
     </string-array>
 
     <string name="subscription_options">Options for @%1$s</string>
@@ -182,5 +294,5 @@
     <string name="frontend_auto">Automatic detection</string>
     <string name="mp4_playback">MP4 playback</string>
     <string name="proxy_media">Proxy images and videos</string>
-    <string name="proxy_media_description">Load images and videos through the selected instance. Keep this enabled when direct connections to X are blocked.</string>
+    <string name="proxy_media_description">Load images and videos through the instance. Required when Block Direct X is on.</string>
 </resources>

@@ -5,7 +5,7 @@ import com.kaleedtc.nitterium.data.frontend.FrontendType
 sealed interface ProfileEvent {
     data object EditGroups : ProfileEvent
     data object DismissGroups : ProfileEvent
-    data class SaveGroups(val groupIds: List<String>) : ProfileEvent
+    data class SaveGroups(val options: com.kaleedtc.nitterium.data.model.SubscriptionOptions) : ProfileEvent
     data class LoadProfile(val username: String) : ProfileEvent
     data class ToggleSubscription(val username: String) : ProfileEvent
     data class FrontendDetected(val url: String, val type: FrontendType) : ProfileEvent
@@ -41,7 +41,9 @@ data class ProfileState(
     val isSiteHeaderEnabled: Boolean = false,
     val isBlockDirectXEnabled: Boolean = false,
     val showUnsubscribeDialog: Boolean = false,
-    val isConnected: Boolean = true
+    val isConnected: Boolean = true,
+    val filterSubscriptions: List<com.kaleedtc.nitterium.data.model.Subscription> = emptyList(),
+    val mutedWords: List<String> = emptyList()
 )
 
 sealed interface ProfileEffect {

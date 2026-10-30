@@ -30,9 +30,15 @@ class ProfileViewModel(
         viewModelScope.launch {
             subscriptionRepository.subscriptions.collect { subscriptions ->
                 setState {
-                    copy(isSubscribed = subscriptions.any { it.username.equals(username, ignoreCase = true) })
+                    copy(
+                        filterSubscriptions = subscriptions,
+                        isSubscribed = subscriptions.any { it.username.equals(username, ignoreCase = true) }
+                    )
                 }
             }
+        }
+        viewModelScope.launch {
+            preferencesRepository.mutedWords.collect { words -> setState { copy(mutedWords = words) } }
         }
         viewModelScope.launch {
             connectivityMonitor.isConnected.collect { isConnected ->
@@ -86,7 +92,7 @@ class ProfileViewModel(
             }
             ProfileEvent.EditGroups -> editGroups()
             ProfileEvent.DismissGroups -> if (!state.value.isSavingGroups) setState { copy(groupAssignment = null) }
-            is ProfileEvent.SaveGroups -> saveGroups(event.groupIds)
+            is ProfileEvent.SaveGroups -> saveGroups(event.options)
             is ProfileEvent.LoadProfile -> loadProfile(event.username)
             is ProfileEvent.ToggleSubscription -> toggleSubscription(event.username)
             is ProfileEvent.OnPageStarted -> {
@@ -203,14 +209,20 @@ class ProfileViewModel(
         }
     }
 
-    private fun saveGroups(groupIds: List<String>) {
+    private fun saveGroups(options: com.kaleedtc.nitterium.data.model.SubscriptionOptions) {
         val subscription = state.value.groupAssignment ?: return
         if (state.value.isSavingGroups) return
         setState { copy(isSavingGroups = true) }
         viewModelScope.launch {
             val groups = groupRepository.groups.first()
-            val validIds = groupIds.filter { id -> groups.any { it.id == id } }
-            subscriptionRepository.saveSubscriptionGroups(subscription, validIds).fold(
+            val validIds = options.groupIds.filter { id -> groups.any { it.id == id } }
+            subscriptionRepository.saveSubscriptionOptions(
+                subscription = subscription,
+                groupIds = validIds,
+                hideRetweets = options.hideRetweets,
+                hideReplies = options.hideReplies,
+                mutedInFeed = options.mutedInFeed
+            ).fold(
                 onSuccess = {
                     setState { copy(groupAssignment = null, isSavingGroups = false) }
                     setEffect { ProfileEffect.ShowMessage(R.string.groups_saved) }

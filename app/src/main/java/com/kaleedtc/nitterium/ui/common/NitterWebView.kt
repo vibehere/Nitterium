@@ -34,6 +34,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -60,10 +61,20 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kaleedtc.nitterium.data.frontend.FrontendType
 import com.kaleedtc.nitterium.data.frontend.FrontendAdapter
 import com.kaleedtc.nitterium.data.frontend.InstanceSettingsCookies
+import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
 import java.net.URI
+import com.kaleedtc.nitterium.data.model.Subscription
+import com.kaleedtc.nitterium.data.security.FeedBatchAppend
+import com.kaleedtc.nitterium.data.security.FeedFilterRules
+import com.kaleedtc.nitterium.data.security.FeedFilterScript
+import com.kaleedtc.nitterium.data.security.PrivacyHeaders
 import com.kaleedtc.nitterium.data.security.UrlPolicy
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+
+private fun WebView.loadPrivacyUrl(url: String) {
+    loadUrl(url, PrivacyHeaders.navigationHeaders())
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
@@ -85,6 +96,11 @@ fun NitterWebView(
     isRefreshing: Boolean = false,
     isProfileView: Boolean = false,
     isFeedView: Boolean = false,
+    feedAppendBatchUrls: List<String> = emptyList(),
+    feedAppendHtmlChunks: List<String> = emptyList(),
+    /** Subscriptions used to resolve per-user feed filters (retweets/replies/mute). */
+    filterSubscriptions: List<Subscription> = emptyList(),
+    mutedWords: List<String> = emptyList(),
     onRefresh: () -> Unit = {},
     onAvatarFound: (String, String) -> Unit = { _, _ -> },
 ) {
@@ -101,6 +117,9 @@ fun NitterWebView(
     var longPressedUrl by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val positionScript = remember { context.assets.open("reading-position.js").bufferedReader().use { it.readText() } }
+    val preferencesRepository = remember { UserPreferencesRepository(context) }
+    val instanceKeys by preferencesRepository.instanceKeys.collectAsState(initial = emptyMap())
+    val instanceKey = instanceKeys[UserPreferencesRepository.hostOf(url)].orEmpty()
 
     DisposableEffect(Unit) {
         onDispose {
@@ -317,8 +336,11 @@ fun NitterWebView(
         )
         val squareAvatars = instanceOptions.squareAvatars == true
         val stickyProfile = instanceOptions.stickyProfile == true
+        val localeScript = PrivacyHeaders.navigatorLocaleScript()
         return """
             javascript:(function() {
+                $localeScript
+
                 function updateStyle(id, css) {
                     var style = document.getElementById(id);
                     if (!style) {
@@ -337,6 +359,7 @@ fun NitterWebView(
                 updateStyle('app-theme-override', `$currentThemeCss`);
                 updateStyle('true-black-override', `$trueBlackCss`);
                 updateStyle('header-override', `$headerCss`);
+                updateStyle('hide-retweets-override', ``);
 
                 updateStyle('general-cleanup', `
                     body, .container, .timeline-container { padding-top: 0 !important; margin-top: 0 !important; }
@@ -441,9 +464,44 @@ fun NitterWebView(
                     window.nitterContextMenuListenerAttached = true;
                 }
 
+                if (!window.nitteriumTweetOpenAttached) {
+                    document.addEventListener('click', function(e) {
+                        var target = e.target;
+                        if (!target || !target.closest) return;
+                        if (target.closest('a, button, video, audio, input, textarea, select, .gallery-row, .attachments, .tweet-stats, .icon-container, .video-container')) {
+                            return;
+                        }
+                        var item = target.closest('.timeline-item, .main-tweet, .reply');
+                        if (!item) return;
+                        var link = item.querySelector('a.tweet-link, .tweet-date a[href*="/status/"], a[href*="/status/"]');
+                        if (!link || !link.href) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.location.href = link.href;
+                    }, false);
+                    window.nitteriumTweetOpenAttached = true;
+                }
+
+                function linkifyMultiFeedHeading() {
+                    var heading = document.querySelector('.multi-user-timeline > h2, .timeline-header h2, .timeline-header');
+                    if (!heading || heading.dataset.nitteriumLinked === '1') return;
+                    var text = (heading.textContent || '').trim();
+                    if (!text || text.indexOf(',') < 0) return;
+                    var parts = text.split(',').map(function(part) { return part.trim(); }).filter(Boolean);
+                    if (parts.length < 2 || parts.some(function(part) { return !/^[A-Za-z0-9_]{1,15}$/.test(part); })) return;
+                    heading.innerHTML = parts.map(function(name) {
+                        return '<a href="/' + name + '">@' + name + '</a>';
+                    }).join(', ');
+                    heading.dataset.nitteriumLinked = '1';
+                }
+                linkifyMultiFeedHeading();
+
                 fixDirection();
                 if (document.body) {
-                    new MutationObserver(fixDirection).observe(document.body, { childList: true, subtree: true });
+                    new MutationObserver(function() {
+                        fixDirection();
+                        linkifyMultiFeedHeading();
+                    }).observe(document.body, { childList: true, subtree: true });
                 }
             })()
         """.trimIndent()
@@ -464,6 +522,34 @@ fun NitterWebView(
     val latestOnPageError by rememberUpdatedState(onPageError)
     val latestInstance by rememberUpdatedState(selectedInstanceUrl)
     val latestOnAvatarFound by rememberUpdatedState(onAvatarFound)
+    val latestFeedAppendBatches by rememberUpdatedState(feedAppendBatchUrls)
+    val latestFeedAppendHtml by rememberUpdatedState(feedAppendHtmlChunks)
+    val latestIsFeedView by rememberUpdatedState(isFeedView)
+    val latestFilterSubscriptions by rememberUpdatedState(filterSubscriptions)
+    val latestMutedWords by rememberUpdatedState(mutedWords)
+    var injectedHtmlCount by remember(url) { mutableIntStateOf(0) }
+
+    fun applyFeedFilters(view: WebView, pageUrl: String?) {
+        if (!UrlPolicy.sameOrigin(selectedInstanceUrl, pageUrl ?: view.url)) return
+        val options = InstanceSettingsCookies.read(
+            runCatching { CookieManager.getInstance().getCookie(pageUrl ?: url).orEmpty() }.getOrDefault(""),
+            frontend
+        )
+        val users = FeedFilterRules.perUserFilters(
+            latestFilterSubscriptions,
+            globalHideRetweets = options.hideRetweets,
+            globalHideReplies = options.hideReplies
+        )
+        view.evaluateJavascript(
+            FeedFilterScript.script(
+                globalHideRetweets = options.hideRetweets,
+                globalHideReplies = options.hideReplies,
+                users = users,
+                mutedWords = latestMutedWords
+            ),
+            null
+        )
+    }
 
     // Request interception runs on a background thread.
     val blockDirectXState = remember { AtomicBoolean(isBlockDirectXEnabled) }
@@ -481,6 +567,16 @@ fun NitterWebView(
 
     Box(modifier = modifier.fillMaxSize()) {
         var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+        LaunchedEffect(instanceKey, webViewRef) {
+            val view = webViewRef ?: return@LaunchedEffect
+            val wanted = UserPreferencesRepository.withAccessKey(view.settings.userAgentString, instanceKey)
+            if (view.settings.userAgentString != wanted) {
+                view.settings.userAgentString = wanted
+                view.reload()
+            }
+        }
+
         val webViewStateBundle = rememberSaveable(
             saver = Saver(
                 save = { saved ->
@@ -502,11 +598,38 @@ fun NitterWebView(
             }
         }
 
+        LaunchedEffect(url) { injectedHtmlCount = 0 }
+
+        LaunchedEffect(feedAppendHtmlChunks.size, webViewRef, url) {
+            val view = webViewRef ?: return@LaunchedEffect
+            if (!latestIsFeedView || !UrlPolicy.sameOrigin(latestInstance, view.url)) return@LaunchedEffect
+            val pages = latestFeedAppendHtml
+            if (pages.size <= injectedHtmlCount) return@LaunchedEffect
+            for (index in injectedHtmlCount until pages.size) {
+                val html = pages[index]
+                if (html.isNotBlank()) {
+                    view.evaluateJavascript(FeedBatchAppend.injectOnePageScript(html), null)
+                }
+                injectedHtmlCount = index + 1
+            }
+            applyFeedFilters(view, view.url)
+        }
+
+        LaunchedEffect(filterSubscriptions, mutedWords, webViewRef, url) {
+            val view = webViewRef ?: return@LaunchedEffect
+            applyFeedFilters(view, view.url)
+        }
+
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_PAUSE -> webViewRef?.onPause()
-                    Lifecycle.Event.ON_RESUME -> webViewRef?.onResume()
+                    Lifecycle.Event.ON_RESUME -> webViewRef?.let { wv ->
+                        wv.onResume()
+                        if (UrlPolicy.sameOrigin(latestInstance, wv.url)) {
+                            wv.evaluateJavascript(latestJsInjection(wv.url), null)
+                        }
+                    }
                     else -> Unit
                 }
             }
@@ -536,6 +659,7 @@ fun NitterWebView(
                     return@LaunchedEffect
                 }
                 instanceOptions.ensureProxyDefaults(url)
+                if (blockDirectXState.get()) instanceOptions.ensureMediaProxyEnabled(url)
                 val currentUrl = wv.url
                 // Only load if the current URL is well-defined and different from the target.
                 // If it is null or about:blank, it means the WebView is either starting fresh 
@@ -544,7 +668,14 @@ fun NitterWebView(
                     val normalizedCurrent = currentUrl.trimEnd('/')
                     val normalizedTarget = url.trimEnd('/')
                     if (normalizedCurrent != normalizedTarget) {
-                        wv.loadUrl(url)
+                        // Keep in-WebView status/profile history; Back uses goBack() instead of remounting Feed All.
+                        if (wv.canGoBack() &&
+                            UrlPolicy.sameOrigin(latestInstance, currentUrl) &&
+                            UrlPolicy.sameOrigin(latestInstance, url)
+                        ) {
+                            return@LaunchedEffect
+                        }
+                        wv.loadPrivacyUrl(url)
                     }
                 }
             }
@@ -574,17 +705,21 @@ fun NitterWebView(
                         javaScriptEnabled = true
                         domStorageEnabled = true
                         cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-                        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
                         allowFileAccess = false
                         allowContentAccess = false
+                        setSupportMultipleWindows(false)
+                        javaScriptCanOpenWindowsAutomatically = false
                         val defaultUA = userAgentString
-                        userAgentString = defaultUA.replace("; wv", "")
-                            .replace(Regex("Version/\\d+\\.\\d+\\s+"), "")
+                        userAgentString = UserPreferencesRepository.withAccessKey(
+                            defaultUA.replace("; wv", "")
+                                .replace(Regex("Version/\\d+\\.\\d+\\s+"), ""),
+                            instanceKey
+                        )
                     }
 
-                    // Enable third party cookies for better instance compatibility
                     val cookieManager = CookieManager.getInstance()
-                    cookieManager.setAcceptThirdPartyCookies(this, true)
+                    cookieManager.setAcceptThirdPartyCookies(this, false)
 
                     setOnLongClickListener { v ->
                         val result = (v as WebView).hitTestResult
@@ -618,7 +753,15 @@ fun NitterWebView(
                                 latestOnPageError(-1, "Blocked navigation outside the selected instance")
                                 return
                             }
-                            view?.alpha = 0f
+                            // Avoid a blank flash when returning to Feed All via history.
+                            val history = view?.copyBackForwardList()
+                            val isHistoryReturn = history != null && history.size > 1 &&
+                                (0 until history.currentIndex).any {
+                                    history.getItemAtIndex(it)?.url == url
+                                }
+                            if (!isHistoryReturn) {
+                                view?.alpha = 0f
+                            }
                             url?.let { latestOnPageStarted(it) }
                         }
 
@@ -682,6 +825,13 @@ fun NitterWebView(
                             view.evaluateJavascript(latestJsInjection(url)) {
                                 if (view.url != url || !UrlPolicy.sameOrigin(latestInstance, url)) return@evaluateJavascript
                                 view.evaluateJavascript(positionScript, null)
+                                applyFeedFilters(view, url)
+                                val append = latestFeedAppendBatches
+                                if (latestIsFeedView && append.isNotEmpty() &&
+                                    url.trimEnd('/') == (view.url ?: "").trimEnd('/')
+                                ) {
+                                    view.evaluateJavascript(FeedBatchAppend.script(append), null)
+                                }
                                 if (webViewStateBundle.containsKey("readingY")) {
                                     val x = webViewStateBundle.getInt("readingX")
                                     val y = webViewStateBundle.getInt("readingY")
@@ -749,27 +899,37 @@ fun NitterWebView(
                                 return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked",
                                     mapOf("Cache-Control" to "no-store"), java.io.ByteArrayInputStream(ByteArray(0)))
                             }
+                            val requestUrl = request?.url?.toString()
                             if (blockDirectXState.get()) {
                                 val requestHost = request?.url?.host?.lowercase()
-                                if (requestHost != null) {
-                                    val isTwitterDomain = UrlPolicy.isXHost(requestHost)
-
-                                    if (isTwitterDomain) {
-                                        val emptyStream = java.io.ByteArrayInputStream(ByteArray(0))
-                                        val headers = mapOf(
-                                            "Cache-Control" to "no-store, no-cache",
-                                            "Pragma" to "no-cache"
-                                        )
-                                        return WebResourceResponse(
-                                            "text/plain",
-                                            "UTF-8",
-                                            403,
-                                            "Blocked",
-                                            headers,
-                                            emptyStream
-                                        )
-                                    }
+                                if (requestHost != null && UrlPolicy.isXHost(requestHost)) {
+                                    val emptyStream = java.io.ByteArrayInputStream(ByteArray(0))
+                                    val headers = mapOf(
+                                        "Cache-Control" to "no-store, no-cache",
+                                        "Pragma" to "no-cache"
+                                    )
+                                    return WebResourceResponse(
+                                        "text/plain",
+                                        "UTF-8",
+                                        403,
+                                        "Blocked",
+                                        headers,
+                                        emptyStream
+                                    )
                                 }
+                            }
+                            if (requestUrl != null &&
+                                !UrlPolicy.sameOrigin(selectedInstanceState.get(), requestUrl) &&
+                                looksLikeScriptRequest(request)
+                            ) {
+                                return WebResourceResponse(
+                                    "text/plain",
+                                    "UTF-8",
+                                    403,
+                                    "Blocked",
+                                    mapOf("Cache-Control" to "no-store"),
+                                    java.io.ByteArrayInputStream(ByteArray(0))
+                                )
                             }
                             return super.shouldInterceptRequest(view, request)
                         }
@@ -781,7 +941,9 @@ fun NitterWebView(
                             val requestUrl = request?.url ?: return true
                             val target = UrlPolicy.httpsUrl(requestUrl.toString()) ?: return true
                             if (blockDirectXState.get() && UrlPolicy.isXHost(target.host)) return true
-                            if (UrlPolicy.sameOrigin(latestInstance, target.toString())) return false
+                            if (UrlPolicy.sameOrigin(latestInstance, target.toString())) {
+                                return false
+                            }
                             if (request.isForMainFrame && request.hasGesture()) {
                                 runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, requestUrl)) }
                             }
@@ -815,6 +977,7 @@ fun NitterWebView(
 
                 if (url.isNotEmpty() && UrlPolicy.sameOrigin(latestInstance, url)) {
                     instanceOptions.ensureProxyDefaults(url)
+                    if (blockDirectXState.get()) instanceOptions.ensureMediaProxyEnabled(url)
                     val cookieManager = CookieManager.getInstance()
                     cookieManager.setAcceptCookie(true)
                     try {
@@ -835,8 +998,11 @@ fun NitterWebView(
                     webView.stopLoading()
                     webView.clearHistory()
                     if (restored != null) webViewStateBundle.clear()
-                    if (url.isNotEmpty() && UrlPolicy.sameOrigin(latestInstance, url)) webView.loadUrl(url)
-                    else if (url.isNotEmpty()) latestOnPageError(-1, "Invalid instance URL")
+                    if (url.isNotEmpty() && UrlPolicy.sameOrigin(latestInstance, url)) {
+                        webView.loadPrivacyUrl(url)
+                    } else if (url.isNotEmpty()) {
+                        latestOnPageError(-1, "Invalid instance URL")
+                    }
                 }
 
                 webViewRef = webView
@@ -895,6 +1061,12 @@ fun NitterWebView(
         // Image Viewer Overlay
         val currentImageState = clickedImageState
         if (currentImageState != null) {
+            DisposableEffect(Unit) {
+                fullScreenMode.value = true
+                onDispose {
+                    if (customView == null) fullScreenMode.value = false
+                }
+            }
             key(currentImageState) {
                 ImageViewer(
                     imageUrls = currentImageState.first,
@@ -989,6 +1161,18 @@ fun NitterWebView(
             }
         }
     }
+}
+
+private fun looksLikeScriptRequest(request: WebResourceRequest?): Boolean {
+    if (request == null) return false
+    val path = request.url?.lastPathSegment?.lowercase().orEmpty()
+    if (path.endsWith(".js") || path.endsWith(".mjs")) return true
+    val accept = request.requestHeaders?.entries
+        ?.firstOrNull { it.key.equals("Accept", ignoreCase = true) }
+        ?.value
+        .orEmpty()
+        .lowercase()
+    return accept.contains("javascript") || accept.contains("ecmascript")
 }
 
 private fun WebView.saveReadingState(destination: Bundle) {

@@ -5,6 +5,7 @@ import com.kaleedtc.nitterium.data.frontend.FrontendType
 import android.net.Uri
 import com.kaleedtc.nitterium.data.model.BackupScope
 import com.kaleedtc.nitterium.data.model.NitteriumBackup
+import com.kaleedtc.nitterium.data.model.SocksProxySettings
 
 data class SettingsState(
     val frontendMode: FrontendType = FrontendType.AUTO,
@@ -24,7 +25,12 @@ data class SettingsState(
     val appVersion: String = "",
     val showReleaseNotesAfterUpdates: Boolean = true,
     val isBackupBusy: Boolean = false,
-    val backupToRestore: NitteriumBackup? = null
+    val backupToRestore: NitteriumBackup? = null,
+    val socksProxy: SocksProxySettings = SocksProxySettings(),
+    val instanceKey: String = "",
+    val feedUsersPerBatch: Int = 10,
+    val feedSpreadAcrossInstances: Boolean = false,
+    val mutedWords: List<String> = emptyList()
 )
 
 sealed interface SettingsEvent {
@@ -47,6 +53,13 @@ sealed interface SettingsEvent {
     data class UpdateDarkTheme(val isDark: Boolean?) : SettingsEvent
     data class UpdateShowReleaseNotes(val enabled: Boolean) : SettingsEvent
     data class UpdateInstanceSetting(val key: String, val value: Boolean) : SettingsEvent
+    data class UpdateSocksProxy(val settings: SocksProxySettings) : SettingsEvent
+    data class UpdateInstanceKey(val key: String) : SettingsEvent
+    data class UpdateFeedUsersPerBatch(val size: Int) : SettingsEvent
+    data class UpdateFeedSpreadAcrossInstances(val enabled: Boolean) : SettingsEvent
+    data class AddMutedWord(val word: String) : SettingsEvent
+    data class RemoveMutedWord(val word: String) : SettingsEvent
+    data object ClearInstanceCookies : SettingsEvent
     data class OpenUrl(val url: String) : SettingsEvent
 }
 

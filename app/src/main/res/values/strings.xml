@@ -351,6 +351,9 @@
     <string name="instance_browser_open">Browse</string>
     <string name="instance_browser_pool_hint">Switches control which hosts Feed All may use when spreading across instances. The radio picks the active page host.</string>
     <string name="close">Close</string>
+    <string name="video_download_started">Downloading video…</string>
+    <string name="video_download_saved">Video saved to Downloads/Nitterium</string>
+    <string name="video_download_failed">Could not download video</string>
     <!-- Prefer hosts marked healthy on status.d420.de / shitter wiki; bot-walled later. -->
     <string-array name="recommended_instance_urls" translatable="false">
         <item>@string/nitter_mie_foundation_url</item>

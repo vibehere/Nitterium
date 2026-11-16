@@ -266,7 +266,7 @@ object FeedChunkFetcher {
             "${base.trimEnd('/')}/pic/" + URLEncoder.encode(url, StandardCharsets.UTF_8.name())
         }
 
-    private fun feedProxySelector(): ProxySelector = object : ProxySelector() {
+    internal fun feedProxySelector(): ProxySelector = object : ProxySelector() {
         override fun select(uri: URI?): List<Proxy> {
             val settings = SocksProxyController.current()
             if (!settings.enabled || !settings.isValid() || uri == null) {

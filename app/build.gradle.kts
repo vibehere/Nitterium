@@ -15,8 +15,8 @@ configure<com.android.build.api.dsl.ApplicationExtension> {
         applicationId = "com.kaleedtc.nitterium"
         minSdk = 30
         targetSdk = 37
-        versionCode = 14
-        versionName = "2.0.1"
+        versionCode = 15
+        versionName = "2.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

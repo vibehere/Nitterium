@@ -40,6 +40,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -67,6 +68,7 @@ import com.kaleedtc.nitterium.data.model.Subscription
 import com.kaleedtc.nitterium.data.security.FeedBatchAppend
 import com.kaleedtc.nitterium.data.security.FeedFilterRules
 import com.kaleedtc.nitterium.data.security.FeedFilterScript
+import com.kaleedtc.nitterium.data.security.MediaDownloader
 import com.kaleedtc.nitterium.data.security.NoJsHtmlDocument
 import com.kaleedtc.nitterium.data.security.PrivacyHeaders
 import com.kaleedtc.nitterium.data.security.TimelineHtml
@@ -74,6 +76,7 @@ import com.kaleedtc.nitterium.data.security.UrlPolicy
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.launch
 
 private fun WebView.loadPrivacyUrl(url: String) {
     loadUrl(url, PrivacyHeaders.navigationHeaders())
@@ -160,6 +163,7 @@ fun NitterWebView(
 
     var longPressedUrl by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val downloadScope = rememberCoroutineScope()
     val positionScript = remember { context.assets.open("reading-position.js").bufferedReader().use { it.readText() } }
     val preferencesRepository = remember { UserPreferencesRepository(context) }
     val instanceKeys by preferencesRepository.instanceKeys.collectAsState(initial = emptyMap())
@@ -1043,6 +1047,31 @@ fun NitterWebView(
                             }
                         }
                         false
+                    }
+
+                    setDownloadListener { downloadUrl, agent, _, mimeType, _ ->
+                        val target = UrlPolicy.instanceUrl(downloadUrl)
+                        val isVideo = mimeType.startsWith("video/") ||
+                            downloadUrl.contains(".mp4", ignoreCase = true)
+                        if (target == null || !isVideo ||
+                            (blockDirectXState.get() && UrlPolicy.isXHost(target.host))
+                        ) {
+                            return@setDownloadListener
+                        }
+                        Toast.makeText(context, R.string.video_download_started, Toast.LENGTH_SHORT).show()
+                        downloadScope.launch {
+                            val saved = MediaDownloader.saveVideo(
+                                context = context,
+                                url = target.toString(),
+                                userAgent = agent,
+                                fileName = MediaDownloader.videoFileName(downloadUrl, System.currentTimeMillis())
+                            )
+                            Toast.makeText(
+                                context,
+                                if (saved) R.string.video_download_saved else R.string.video_download_failed,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
 
                     // Leave HTTP error documents in the WebView so browser-verification

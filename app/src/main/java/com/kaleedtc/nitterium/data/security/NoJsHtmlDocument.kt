@@ -9,6 +9,11 @@ object NoJsHtmlDocument {
     private val scriptSrc = Regex("(?is)<script\\b[^>]*/>")
     private val inlineHandler = Regex("(?is)\\s+on[a-z]+\\s*=\\s*(['\"])(.*?)\\1")
     private val javascriptHref = Regex("(?i)href\\s*=\\s*(['\"])\\s*javascript:[^'\"]*\\1")
+    private val lazyVideoTag = Regex("(?is)<video\\b([^>]*?)\\sdata-url\\s*=\\s*\"([^\"]*)\"([^>]*)>")
+    private val srcAttr = Regex("(?i)\\ssrc\\s*=")
+
+    /** Nitter's play overlay only works through its scripts, which are stripped here. */
+    private const val NATIVE_VIDEO_CSS = ".video-overlay{display:none!important}"
 
     fun prepare(
         html: String,
@@ -32,14 +37,27 @@ object NoJsHtmlDocument {
         )
         val ordered = NoJsTimelineMerge.sortNewestFirst(posts)
         val body = NoJsTimelineMerge.replaceTimelineItems(merged, ordered + showMore)
-        return injectStyles(stripActiveContent(body), styleCss, styleAssets)
+        return injectStyles(stripActiveContent(body), styleCss + NATIVE_VIDEO_CSS, styleAssets)
     }
 
     fun stripActiveContent(html: String): String =
-        html.replace(scriptTag, "")
-            .replace(scriptSrc, "")
-            .replace(inlineHandler, "")
-            .replace(javascriptHref, "href=\"#\"")
+        nativeVideoPlayback(
+            html.replace(scriptTag, "")
+                .replace(scriptSrc, "")
+                .replace(inlineHandler, "")
+                .replace(javascriptHref, "href=\"#\"")
+        )
+
+    /** Lazy Nitter videos keep their stream in data-url; WebView plays it natively with controls. */
+    fun nativeVideoPlayback(html: String): String =
+        html.replace(lazyVideoTag) { match ->
+            val (before, url, after) = match.destructured
+            if (srcAttr.containsMatchIn(before + after)) {
+                match.value
+            } else {
+                "<video$before data-url=\"$url\"$after src=\"$url\" controls preload=\"none\">"
+            }
+        }
 
     fun injectStyles(html: String, styleCss: String, styleAssets: String = ""): String {
         val assets = styleAssets.trim().ifBlank { TimelineHtml.FALLBACK_FEED_STYLE_ASSETS }

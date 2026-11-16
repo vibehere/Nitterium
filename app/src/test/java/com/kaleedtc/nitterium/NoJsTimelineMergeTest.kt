@@ -42,6 +42,35 @@ class NoJsTimelineMergeTest {
     }
 
     @Test
+    fun lazyVideoGetsNativeSourceAndControls() {
+        val html = """<div class="video-overlay" onclick="playVideo(this)"></div>""" +
+            """<video poster="/pic/t.jpg" data-url="/video/K/a.m3u8%3Ftag%3D1" data-type="hls"></video>"""
+
+        val out = NoJsHtmlDocument.stripActiveContent(html)
+
+        assertFalse(out.contains("onclick"))
+        assertTrue(out.contains("""src="/video/K/a.m3u8%3Ftag%3D1" controls preload="none""""))
+        assertTrue(out.contains("""data-url="/video/K/a.m3u8%3Ftag%3D1""""))
+    }
+
+    @Test
+    fun videoWithSourceIsLeftAlone() {
+        val tag = """<video src="/video/K/a.mp4" data-url="/video/K/a.mp4" controls>"""
+
+        assertTrue(NoJsHtmlDocument.nativeVideoPlayback(tag) == tag)
+    }
+
+    @Test
+    fun preparedFeedHidesScriptOnlyPlayOverlay() {
+        val prepared = NoJsHtmlDocument.prepare(
+            html = """<html><head></head><body><div class="timeline"></div></body></html>""",
+            styleCss = ""
+        )
+
+        assertTrue(prepared.contains(".video-overlay{display:none!important}"))
+    }
+
+    @Test
     fun compareStatusIdsOrdersByNumericSnowflake() {
         assertTrue(NoJsTimelineMerge.compareStatusIds("100", "99") > 0)
         assertTrue(NoJsTimelineMerge.compareStatusIds("99", "100") < 0)

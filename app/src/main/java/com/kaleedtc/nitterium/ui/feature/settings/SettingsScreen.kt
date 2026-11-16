@@ -27,9 +27,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.AlertDialog
@@ -47,6 +46,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -174,7 +174,10 @@ fun SettingsContent(
 
             Box(modifier = Modifier.weight(1f)) {
                 if (state.isLoading) {
-                    com.kaleedtc.nitterium.ui.common.LoadingIndicator(isLoading = true)
+                    com.kaleedtc.nitterium.ui.common.LoadingIndicator(
+                        isLoading = true,
+                        fullscreen = true
+                    )
                 } else {
                     when (selectedTabIndex) {
                         0 -> AppSettingsList(state, onEvent)
@@ -196,42 +199,7 @@ fun AppSettingsList(
     state: SettingsState,
     onEvent: (SettingsEvent) -> Unit
 ) {
-    var showAddInstanceDialog by remember { mutableStateOf(false) }
-
-    if (showAddInstanceDialog) {
-        var newInstanceUrl by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAddInstanceDialog = false },
-            title = { Text(stringResource(R.string.add_custom_instance)) },
-            text = {
-                OutlinedTextField(
-                    value = newInstanceUrl,
-                    onValueChange = { newInstanceUrl = it },
-                    label = { Text("URL") },
-                    placeholder = { Text(stringResource(R.string.custom_instance_url_hint)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (newInstanceUrl.isNotBlank()) {
-                            onEvent(SettingsEvent.AddCustomInstance(newInstanceUrl.trim()))
-                        }
-                        showAddInstanceDialog = false
-                    }
-                ) {
-                    Text(stringResource(R.string.add))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddInstanceDialog = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            }
-        )
-    }
+    var showInstanceBrowser by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -258,6 +226,17 @@ fun AppSettingsList(
                     )
                 }
             )
+            SettingsSwitch(
+                label = stringResource(R.string.disable_web_javascript),
+                checked = state.disableWebJavascript,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateDisableWebJavascript(it)) },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.disable_web_javascript),
+                        description = stringResource(R.string.disable_web_javascript_description)
+                    )
+                }
+            )
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
@@ -267,131 +246,199 @@ fun AppSettingsList(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            val (expanded, setExpanded) = remember { mutableStateOf(false) }
             val builtIn = stringArrayResource(R.array.default_instance_urls).toList()
-            val torFriendly = stringArrayResource(R.array.tor_friendly_instance_urls).toList()
-            val torLabel = stringResource(R.string.instance_tor_label)
-            val torFriendlyLabel = stringResource(R.string.instance_tor_friendly_label)
-            val groupedInstances = remember(state.availableInstances, state.customInstances, torFriendly, builtIn) {
-                UrlPolicy.groupedInstanceChoices(
+            val onionOnly =
+                state.socksProxy.enabled && state.socksPreferOnionInstances
+
+            if (showInstanceBrowser) {
+                InstanceBrowserDialog(
+                    selectedUrl = state.instanceUrl,
                     builtIn = builtIn,
                     custom = state.customInstances,
-                    selected = state.instanceUrl,
-                    torFriendly = torFriendly
+                    discovered = state.discoveredInstances,
+                    directoryEntries = state.instanceCatalog,
+                    disabledUrls = state.disabledInstanceUrls,
+                    onionOnly = onionOnly,
+                    onSelect = { onEvent(SettingsEvent.UpdateInstanceUrl(it)) },
+                    onAddCustom = { onEvent(SettingsEvent.AddCustomInstance(it)) },
+                    onRemoveCustom = { onEvent(SettingsEvent.RemoveCustomInstance(it)) },
+                    onSetDisabled = { url, disabled ->
+                        onEvent(SettingsEvent.SetInstanceDisabled(url, disabled))
+                    },
+                    onDismiss = { showInstanceBrowser = false }
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showInstanceBrowser = true },
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceContainerLow
             ) {
-                ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = setExpanded,
-                    modifier = Modifier.weight(1f)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedTextField(
-                        value = state.instanceUrl,
-                        onValueChange = { onEvent(SettingsEvent.UpdateInstanceUrl(it)) },
-                        label = { Text(stringResource(R.string.nitter_instance_url)) },
-                        supportingText = {
-                            val host = UrlPolicy.displayHost(state.instanceUrl)
-                            if (host.isNotBlank() && host != state.instanceUrl) {
-                                Text(host)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
-                        singleLine = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-                    )
-
-                    ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { setExpanded(false) }
-                    ) {
-                        groupedInstances.forEach { (group, instances) ->
-                            val groupLabel = when (group) {
-                                UrlPolicy.InstanceGroup.TorFriendly -> stringResource(R.string.instance_group_tor_friendly)
-                                UrlPolicy.InstanceGroup.Public -> stringResource(R.string.instance_group_public)
-                                UrlPolicy.InstanceGroup.Onion -> stringResource(R.string.instance_group_onion)
-                                UrlPolicy.InstanceGroup.Custom -> stringResource(R.string.instance_group_custom)
-                            }
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        groupLabel,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                },
-                                onClick = {},
-                                enabled = false
-                            )
-                            instances.forEach { instance ->
-                                val badge = when (group) {
-                                    UrlPolicy.InstanceGroup.Onion -> torLabel
-                                    UrlPolicy.InstanceGroup.TorFriendly -> torFriendlyLabel
-                                    UrlPolicy.InstanceGroup.Public, UrlPolicy.InstanceGroup.Custom -> null
-                                }
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(
-                                                UrlPolicy.displayHost(instance),
-                                                style = MaterialTheme.typography.bodyLarge
-                                            )
-                                            Text(
-                                                instance,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            if (badge != null) {
-                                                Text(
-                                                    badge,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        onEvent(SettingsEvent.UpdateInstanceUrl(instance))
-                                        setExpanded(false)
-                                    },
-                                    trailingIcon = if (state.customInstances.contains(instance)) {
-                                        {
-                                            IconButton(onClick = {
-                                                onEvent(SettingsEvent.RemoveCustomInstance(instance))
-                                            }) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Delete,
-                                                    contentDescription = stringResource(R.string.remove),
-                                                    tint = MaterialTheme.colorScheme.error
-                                                )
-                                            }
-                                        }
-                                    } else null
-                                )
-                            }
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.nitter_instance_url),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = UrlPolicy.displayHost(state.instanceUrl)
+                                .ifBlank { state.instanceUrl },
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = if (onionOnly) {
+                                stringResource(R.string.instance_browser_onion_subtitle)
+                            } else {
+                                state.instanceUrl
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                    }
+                    TextButton(onClick = { showInstanceBrowser = true }) {
+                        Text(stringResource(R.string.instance_browser_open))
                     }
                 }
+            }
 
-                IconButton(
-                    onClick = { showAddInstanceDialog = true },
-                    modifier = Modifier.padding(top = 8.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(
+                onClick = { onEvent(SettingsEvent.ScanPublicInstances) },
+                enabled = !state.isScanningInstances && !state.isProbingInstances
+            ) {
+                Text(
+                    if (state.isScanningInstances) {
+                        stringResource(R.string.instance_scan_running)
+                    } else {
+                        stringResource(R.string.instance_scan_public)
+                    }
+                )
+            }
+            TextButton(
+                onClick = { onEvent(SettingsEvent.ProbeInstanceAvailability) },
+                enabled = !state.isScanningInstances && !state.isProbingInstances
+            ) {
+                Text(
+                    if (state.isProbingInstances) {
+                        stringResource(
+                            R.string.instance_probe_running,
+                            state.instanceProbeChecked,
+                            state.instanceProbeTotal.coerceAtLeast(1)
+                        )
+                    } else {
+                        stringResource(R.string.instance_probe_start)
+                    }
+                )
+            }
+            if (state.discoveredInstances.isNotEmpty()) {
+                Text(
+                    text = stringResource(
+                        R.string.instance_scan_cached_count,
+                        state.discoveredInstances.size
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = stringResource(R.string.instance_scan_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                text = stringResource(R.string.instance_probe_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            var presetName by rememberSaveable { mutableStateOf("") }
+            Text(
+                text = stringResource(R.string.instance_pool_presets_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = stringResource(R.string.instance_pool_presets_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = presetName,
+                onValueChange = { presetName = it },
+                label = { Text(stringResource(R.string.instance_pool_preset_name)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            TextButton(
+                onClick = {
+                    val name = presetName.trim()
+                    if (name.isBlank()) return@TextButton
+                    val urls = (
+                        state.discoveredInstances +
+                            state.customInstances +
+                            state.availableInstances
+                        )
+                        .filter { url ->
+                            url.trimEnd('/').lowercase() !in
+                                state.disabledInstanceUrls.map { it.trimEnd('/').lowercase() }
+                        }
+                        .distinct()
+                    onEvent(SettingsEvent.SaveInstancePoolPreset(name, urls))
+                    presetName = ""
+                },
+                enabled = presetName.isNotBlank()
+            ) {
+                Text(stringResource(R.string.instance_pool_preset_save))
+            }
+            state.instancePoolPresets.forEach { preset ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.add_custom_instance),
-                        tint = MaterialTheme.colorScheme.primary
+                    RadioButton(
+                        selected = state.activeInstancePoolPresetId == preset.id,
+                        onClick = {
+                            onEvent(
+                                SettingsEvent.SetActiveInstancePoolPreset(
+                                    if (state.activeInstancePoolPresetId == preset.id) null
+                                    else preset.id
+                                )
+                            )
+                        }
                     )
+                    Column(Modifier.weight(1f)) {
+                        Text(preset.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = stringResource(
+                                R.string.instance_pool_preset_count,
+                                preset.urls.size
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onEvent(SettingsEvent.RemoveInstancePoolPreset(preset.id))
+                        }
+                    ) {
+                        Text(stringResource(R.string.remove))
+                    }
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
 
             Spacer(modifier = Modifier.height(8.dp))
             var keyInput by rememberSaveable(state.instanceUrl) { mutableStateOf(state.instanceKey) }
@@ -461,6 +508,20 @@ fun AppSettingsList(
                     SettingsInfoIcon(
                         title = stringResource(R.string.socks_proxy),
                         description = stringResource(R.string.socks_proxy_description)
+                    )
+                }
+            )
+            SettingsSwitch(
+                label = stringResource(R.string.socks_prefer_onion),
+                checked = state.socksPreferOnionInstances,
+                enabled = state.socksProxy.enabled,
+                onCheckedChange = {
+                    onEvent(SettingsEvent.UpdateSocksPreferOnion(it))
+                },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.socks_prefer_onion),
+                        description = stringResource(R.string.socks_prefer_onion_description)
                     )
                 }
             )
@@ -569,6 +630,26 @@ fun AppSettingsList(
                         description = stringResource(R.string.feed_spread_across_instances_description)
                     )
                 }
+            )
+            SettingsSwitch(
+                label = stringResource(R.string.feed_prefer_rss),
+                checked = state.feedPreferRss,
+                onCheckedChange = { onEvent(SettingsEvent.UpdateFeedPreferRss(it)) },
+                icon = {
+                    SettingsInfoIcon(
+                        title = stringResource(R.string.feed_prefer_rss),
+                        description = stringResource(R.string.feed_prefer_rss_description)
+                    )
+                }
+            )
+            TextButton(onClick = { onEvent(SettingsEvent.ClearFeedCache) }) {
+                Text(stringResource(R.string.feed_cache_clear))
+            }
+            Text(
+                text = stringResource(R.string.feed_cache_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
             )
             Spacer(modifier = Modifier.height(24.dp))
         }

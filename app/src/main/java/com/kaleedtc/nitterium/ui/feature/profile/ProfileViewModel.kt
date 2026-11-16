@@ -11,6 +11,7 @@ import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
 import com.kaleedtc.nitterium.ui.common.MviViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.kaleedtc.nitterium.data.security.InstanceRotation
 import com.kaleedtc.nitterium.data.security.UrlPolicy
 
 class ProfileViewModel(
@@ -128,8 +129,34 @@ class ProfileViewModel(
                 }
             }
             is ProfileEvent.Refresh -> {
-                setState { copy(isRefreshing = state.value.isConnected, isError = false) }
-                // Triggers recomposition in WebView to reload
+                viewModelScope.launch {
+                    val username = state.value.username
+                    if (username.isNotBlank() && preferencesRepository.feedSpreadAcrossInstances.first()) {
+                        val host = InstanceRotation.pickHost(preferencesRepository)
+                        val url = FrontendAdapter.forType(state.value.frontend).profileUrl(host, username)
+                        setState {
+                            copy(
+                                selectedInstanceUrl = host,
+                                currentUrl = url,
+                                displayedPageUrl = null,
+                                isRefreshing = isConnected,
+                                isError = false,
+                                isLoading = isConnected,
+                                loadGeneration = loadGeneration + 1,
+                                avatarUrl = null
+                            )
+                        }
+                    } else {
+                        setState {
+                            copy(
+                                isRefreshing = isConnected,
+                                isError = false,
+                                isLoading = isConnected,
+                                loadGeneration = loadGeneration + 1
+                            )
+                        }
+                    }
+                }
             }
             is ProfileEvent.ClearError -> setState { copy(isError = false) }
             is ProfileEvent.NavigateBack -> setEffect { ProfileEffect.NavigateBack }
@@ -141,12 +168,12 @@ class ProfileViewModel(
     private fun loadProfile(username: String) {
         viewModelScope.launch {
             try {
-                val instanceUrl = preferencesRepository.instanceUrl.first().trimEnd('/')
+                val instanceUrl = InstanceRotation.pickHost(preferencesRepository)
                 val url = FrontendAdapter.forType(state.value.frontend).profileUrl(instanceUrl, username)
                 val isSubscribed = subscriptionRepository.isSubscribed(username)
                 val isConnected = state.value.isConnected
-                
-                setState { 
+
+                setState {
                     copy(
                         username = username,
                         currentUrl = url,
@@ -155,8 +182,8 @@ class ProfileViewModel(
                         isSubscribed = isSubscribed,
                         isLoading = isConnected,
                         isError = false,
-                        avatarUrl = null // Reset avatar on new load
-                    ) 
+                        avatarUrl = null
+                    )
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

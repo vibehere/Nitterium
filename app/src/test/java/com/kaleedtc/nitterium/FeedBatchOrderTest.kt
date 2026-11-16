@@ -37,4 +37,15 @@ class FeedBatchOrderTest {
         assertFalse(ordered.take(3) == names.take(3))
         assertTrue(ordered.take(3).contains("u1"))
     }
+
+    @Test
+    fun shuffleSeedReshufflesButKeepsSameMembers() {
+        val names = listOf("a", "b", "c", "d", "e", "f")
+        val a = FeedBatchOrder.orderForFeed(names, chunkSize = 1, diversify = false, shuffleSeed = 1L)
+        val b = FeedBatchOrder.orderForFeed(names, chunkSize = 1, diversify = false, shuffleSeed = 2L)
+        assertEquals(names.toSet(), a.toSet())
+        assertEquals(names.toSet(), b.toSet())
+        assertEquals(a, FeedBatchOrder.orderForFeed(names, chunkSize = 1, diversify = false, shuffleSeed = 1L))
+        assertTrue(a != b)
+    }
 }

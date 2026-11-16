@@ -21,15 +21,29 @@
     <string name="retweeted_by">Retweeted by %1$s</string>
     <string name="feed_multi_count">%1$d Nitters</string>
     <string name="feed_multi_count_loading">%1$d Nitters…</string>
-    <string name="feed_multi_status_title">Instances used</string>
-    <string name="feed_multi_status_shell">Shell (open page)</string>
+    <string name="feed_multi_spread_subtitle">Spread across %1$d Nitter(s)</string>
+    <string name="feed_multi_spread_subtitle_loading">Spread across %1$d Nitter(s)…</string>
+    <string name="feed_multi_spread_with_accounts">Spread · %1$d Nitter(s) · %2$d/%3$d</string>
+    <string name="feed_multi_status_title">Spread across Nitters</string>
+    <string name="feed_multi_status_title_count">Spread across %1$d Nitter(s)</string>
+    <string name="feed_multi_status_shell">Open page</string>
     <string name="feed_multi_status_chunk">Also loaded from</string>
+    <string name="feed_multi_status_hosts">Nitters in this feed</string>
+    <string name="feed_multi_status_host_page">%1$s (page)</string>
     <string name="feed_multi_status_progress">Chunks loaded: %1$d of %2$d</string>
+    <string name="feed_multi_status_pool">Spread pool: %1$d Nitter(s) · used %2$d</string>
+    <string name="feed_multi_status_failed">%1$d chunk(s) failed on their Nitter</string>
     <string name="feed_multi_status_probing">Looking for a working instance…</string>
     <string name="feed_multi_status_done">All chunks finished</string>
     <string name="feed_multi_status_loading">Still loading more chunks…</string>
     <string name="feed_multi_status_close">Close</string>
     <string name="feed_multi_instances_cd">Show which Nitter instances this feed used</string>
+    <string name="feed_challenge_banner">%1$d Nitter(s) need a browser check before their accounts load</string>
+    <string name="feed_challenge_verify">Verify</string>
+    <string name="feed_challenge_title">Browser check · %1$s</string>
+    <string name="feed_challenge_message">Complete the check if one is shown. The accounts reload from this Nitter once it lets you through.</string>
+    <string name="feed_challenge_done">Done</string>
+    <string name="feed_challenge_skip">Skip</string>
 
     <!-- Search Screen -->
     <string name="search_nitter">Search tweets</string>
@@ -75,6 +89,15 @@
     <string name="no_groups_created">No groups created yet. Go to Feed to create one!</string>
     <string name="manage_group_members">Manage members</string>
     <string name="edit_group_action">Edit group</string>
+    <string name="edit_groups_cd">Edit groups for @%1$s</string>
+    <string name="search_group_members">Search following</string>
+    <string name="search_groups">Search groups</string>
+    <string name="group_members_in_group">In this group (%1$d)</string>
+    <string name="group_members_not_in_group">Not in this group</string>
+    <string name="group_members_select_visible">Select all shown</string>
+    <string name="group_members_clear_visible">Clear shown</string>
+    <string name="no_matching_group_members">No matching accounts</string>
+    <string name="groups_none">No groups</string>
     <string name="delete_group_title">Delete group?</string>
     <string name="delete_group_message">Delete \"%1$s\"? Subscriptions stay saved but leave this group.</string>
     <string name="group_members_title">Members of %1$s</string>
@@ -144,12 +167,20 @@
     <string name="network">Network</string>
     <string name="socks_proxy">SOCKS proxy (Tor)</string>
     <string name="socks_proxy_enable">Use SOCKS proxy</string>
-    <string name="socks_proxy_description">Routes the app through a local SOCKS proxy (default 127.0.0.1:9050). Start the proxy first—this app does not embed Tor. Leave off if a system Tor VPN already covers the device.</string>
-    <string name="socks_proxy_system_tor_note">Leave SOCKS off if a system Tor VPN is already active, to avoid routing loops.</string>
+    <string name="socks_proxy_description">Routes the app through a local SOCKS proxy (default 127.0.0.1:9050). Start the proxy first—this app does not embed Tor. Leave off if a system Tor VPN already covers the device—`.onion` hosts still work through the VPN.</string>
+    <string name="socks_proxy_system_tor_note">Leave SOCKS off if a system Tor VPN is already active, to avoid routing loops. Pick a `.onion` Nitter while the VPN is connected.</string>
     <string name="socks_proxy_host">Proxy host</string>
     <string name="socks_proxy_port">Proxy port</string>
     <string name="socks_proxy_images">Also proxy images</string>
     <string name="socks_proxy_images_description">Send image downloads through the same SOCKS proxy. Separate from Instance → Proxy media.</string>
+    <string name="disable_web_javascript">Disable JavaScript</string>
+    <string name="disable_web_javascript_description">Blocks page scripts in the WebView. Feed All still appends account batches by merging HTML in the app. Theme and mute filters are applied as CSS/HTML. Some instance UI (infinite scroll, challenges) will not work.</string>
+    <string name="socks_prefer_onion">Onion-only Nitters</string>
+    <string name="socks_prefer_onion_description">While SOCKS/Tor is on, connect only to .onion Nitter hosts—clearnet frontends are blocked. Your previous clearnet instance is restored when this or SOCKS is turned off.</string>
+    <string name="socks_onion_only_required">Onion-only mode is on: choose a .onion Nitter</string>
+    <string name="socks_onion_unavailable">Onion-only mode needs a working .onion Nitter. Add one or disable onion-only.</string>
+    <string name="socks_switched_to_onion">Switched to a Tor .onion Nitter</string>
+    <string name="socks_restored_clearnet">Restored previous clearnet instance</string>
     <string name="socks_proxy_invalid">Enter a valid host and port (1–65535).</string>
     <string name="nitter_instance_url">Instance URL (Nitter or Teapot)</string>
     <string name="instance_access_key">Instance access key (optional)</string>
@@ -170,9 +201,36 @@
     <string name="feed_loading">Feed All</string>
     <string name="feed_users_per_batch">Accounts per request</string>
     <string name="feed_users_per_batch_range">Enter a number from %1$d to %2$d</string>
-    <string name="feed_users_per_batch_description">How many usernames each Nitter request may include. Smaller chunks are harder to block; remaining accounts load into the same scroll automatically—no batch swiping.</string>
+    <string name="feed_users_per_batch_description">Used when Spread is on: how many usernames each host request may include. Without Spread, Feed All loads one account per request (NewPipe-style), shuffled each refresh.</string>
+    <string name="feed_accounts_checked_progress">Checked %1$d of %2$d accounts</string>
+    <string name="feed_accounts_checked_done">Checked %1$d accounts</string>
+    <string name="feed_accounts_checked_cached">Checked %1$d of %2$d · %3$d from cache</string>
+    <string name="feed_cache_clear">Clear feed cache</string>
+    <string name="feed_cache_cleared">Feed cache cleared</string>
+    <string name="feed_cache_description">Timeline chunks stay in a local SQLite cache for about 15 minutes (like NewPipe feed freshness) so revisiting Feed All is faster. Pull-to-refresh bypasses the cache.</string>
     <string name="feed_spread_across_instances">Spread across instances</string>
     <string name="feed_spread_across_instances_description">Split subscriptions into chunks and send each to a random available instance. Few hosts are reused at random. Refresh reshuffles. Chunks still merge into one timeline.</string>
+    <string name="feed_prefer_rss">Fast mode (RSS)</string>
+    <string name="feed_prefer_rss_description">Like NewPipe fast mode: fetch each account’s RSS one-by-one in a shuffled order (smaller payloads). Off = regular mode (one HTML timeline per account). Falls back to HTML if RSS fails on a host.</string>
+    <string name="instance_scan_public">Scan public instances</string>
+    <string name="instance_scan_running">Scanning…</string>
+    <string name="instance_scan_failed">Could not reach instance status APIs. Try again later.</string>
+    <string name="instance_scan_failed_tor">Could not reach status APIs through Tor. Check Orbot/SOCKS, or briefly disable onion-only and retry.</string>
+    <string name="instance_scan_onion_note">Found %1$d clearnet hosts for later; onion-only mode still restricts the live pool to onions.</string>
+    <string name="instance_scan_found">Found %1$d healthy public instances</string>
+    <string name="instance_scan_cached_count">%1$d scanned hosts in your picker</string>
+    <string name="instance_scan_description">Fetches healthy hosts from status.d420.de and d420.net (same sources Twiiit-style tools use). Do not scrape those instances heavily—prefer your own Nitter when possible. With SOCKS on, onion hosts from those APIs are kept too.</string>
+    <string name="instance_probe_start">Check which instances work</string>
+    <string name="instance_probe_running">Checking %1$d / %2$d…</string>
+    <string name="instance_probe_description">Fetches a public profile timeline (not the homepage) plus RSS over your SOCKS settings. Working hosts stay in the spread pool; HTML failures are turned off. Shows version and DDoS hints from status data plus local checks.</string>
+    <string name="instance_probe_empty">No instances to check. Scan public instances or add custom hosts first.</string>
+    <string name="instance_probe_failed">Instance check failed. Try again with SOCKS if you use Tor.</string>
+    <string name="instance_probe_done">Checked %1$d hosts · %2$d HTML ok · %3$d failed and disabled in the pool.</string>
+    <string name="instance_pool_presets_title">Instance pool groups</string>
+    <string name="instance_pool_presets_description">Save the current enabled hosts as a named pool for Feed All spread. Activate one to rotate only within that group.</string>
+    <string name="instance_pool_preset_name">Pool name</string>
+    <string name="instance_pool_preset_save">Save pool from enabled hosts</string>
+    <string name="instance_pool_preset_count">%1$d hosts</string>
     <string name="feed_users_per_batch_value">%1$d accounts</string>
     <string name="theme_mode">Theme Mode</string>
     <string name="system_default">System Default</string>
@@ -240,46 +298,136 @@
     <string name="donate_url" translatable="false">https://github.com/kaleedtc/Nitterium#donate</string>
 
 
-    <string name="xitter_url" translatable="false">https://xitter.cf</string>
-    <string name="nitter_mie_foundation_url" translatable="false">https://nitter.mie.foundation</string>
-    <string name="nitter_netbub_url" translatable="false">https://nitter.netbub.com</string>
-    <string name="nitter_tiekoetter_url" translatable="false">https://nitter.tiekoetter.com</string>
-    <string name="nitter_jaydenha_url" translatable="false">https://nitter.jaydenha.uk</string>
-    <string name="nitter_pp_ua_url" translatable="false">https://nitter.pp.ua</string>
     <string name="shitter_thepixora_url" translatable="false">https://shitter.thepixora.com</string>
+    <string name="nitter_pp_ua_url" translatable="false">https://nitter.pp.ua</string>
+    <string name="nitter_netbub_url" translatable="false">https://nitter.netbub.com</string>
     <string name="nitter_mizuki_url" translatable="false">https://nitter.mizuki.st</string>
     <string name="nitter_r4fo_url" translatable="false">https://nitter.r4fo.com</string>
+    <string name="nitter_tiekoetter_url" translatable="false">https://nitter.tiekoetter.com</string>
+    <string name="xnologin_url" translatable="false">https://xnologin.com</string>
+    <string name="nitter_meowing_monster_url" translatable="false">https://nitter.meowing.monster</string>
+    <string name="nitter_kareem_url" translatable="false">https://nitter.kareem.one</string>
+    <string name="shi_meowing_url" translatable="false">https://shi.meowing.de</string>
+    <string name="nitter_mie_foundation_url" translatable="false">https://nitter.mie.foundation</string>
+    <string name="nitter_miningtcup_url" translatable="false">https://nitter.miningtcup.me</string>
+    <string name="nitter_jaydenha_url" translatable="false">https://nitter.jaydenha.uk</string>
+    <string name="nitter_click_url" translatable="false">https://nitter.click</string>
     <string name="nitter_xitter_cc_url" translatable="false">https://nitter.xitter.cc</string>
+    <string name="x_n0g_xyz_url" translatable="false">https://x.n0g.xyz</string>
+    <string name="tw_eir_nya_url" translatable="false">https://tw.eir-nya.gay</string>
+    <string name="xcopy_uk_url" translatable="false">https://xcopy.uk</string>
+    <string name="goyimx_url" translatable="false">https://goyimx.com</string>
+    <string name="xitter_gq_url" translatable="false">https://xitter.gq</string>
+    <string name="teapaw_org_url" translatable="false">https://teapaw.org</string>
+    <string name="teapawt_org_url" translatable="false">https://teapawt.org</string>
+    <string name="nitter_gq_url" translatable="false">https://nitter.gq</string>
+    <string name="xitter_cf_url" translatable="false">https://xitter.cf</string>
+    <string name="teapawt_net_url" translatable="false">https://teapawt.net</string>
+    <string name="nohup_cz_url" translatable="false">https://nohup.cz</string>
+    <string name="nitter_catsarch_url" translatable="false">https://nitter.catsarch.com</string>
+    <string name="nitter_privacyredirect_url" translatable="false">https://nitter.privacyredirect.com</string>
+    <string name="nitter_ip6arpa_url" translatable="false">https://nitter.ip6arpa.uk</string>
     <string name="nitter_onion_lesbo_url" translatable="false">http://nitter.lesboswza6waq3itqo46rvf5a7dibxih32f2umwg6fpssxj66spmclyd.onion</string>
     <string name="nitter_onion_dhgj_url" translatable="false">http://dhgjnhkxtgesvcddfwzqm4d4zmyz2x2jud6huweu5iywuvoo7qaqpjid.onion</string>
     <string name="nitter_onion_catsarch_url" translatable="false">http://nitter.catsarchywsyuss6jdxlypsw5dc7owd5u5tr6bujxb7o6xw2hipqehyd.onion</string>
     <string name="instance_tor_label">Tor</string>
-    <string name="instance_tor_friendly_label">Tor-friendly</string>
-    <string name="instance_picker_subtitle">Pick a working frontend. Tor-friendly hosts skip bot checks.</string>
-    <string name="instance_group_tor_friendly">Tor-friendly</string>
+    <string name="instance_picker_subtitle">Pick a working frontend for browsing and feeds.</string>
     <string name="instance_group_public">Public</string>
     <string name="instance_group_onion">Tor (.onion)</string>
     <string name="instance_group_custom">Custom</string>
+    <string name="instance_group_expand">Expand %1$s</string>
+    <string name="instance_group_collapse">Collapse %1$s</string>
     <string name="custom_instance_url_hint">HTTPS instance or http://….onion</string>
     <string name="instance_url_invalid">Use an HTTPS URL or an http://….onion Tor address (no credentials)</string>
-    <string-array name="default_instance_urls" translatable="false">
-        <item>@string/xitter_url</item>
+    <string name="instance_recommended_title">Recommended instances</string>
+    <string name="instance_recommended_description">Hosts that usually stay healthy on public status boards. Flip a switch to make that Nitter your active instance.</string>
+    <string name="instance_recommended_use">Use %1$s</string>
+    <string name="instance_browser_title">Choose instances</string>
+    <string name="instance_browser_onion_title">Choose .onion instance</string>
+    <string name="instance_browser_subtitle">Search and add hosts. Radio sets the active instance; the switch includes it in feed loading.</string>
+    <string name="instance_browser_onion_subtitle">Onion-only mode: pick one .onion Nitter. Clearnet hosts are hidden.</string>
+    <string name="instance_browser_search">Search instances</string>
+    <string name="instance_browser_empty">No matching instances</string>
+    <string name="instance_browser_open">Browse</string>
+    <string name="instance_browser_pool_hint">Switches control which hosts Feed All may use when spreading across instances. The radio picks the active page host.</string>
+    <string name="close">Close</string>
+    <!-- Prefer hosts marked healthy on status.d420.de / shitter wiki; bot-walled later. -->
+    <string-array name="recommended_instance_urls" translatable="false">
         <item>@string/nitter_mie_foundation_url</item>
-        <item>@string/nitter_netbub_url</item>
-        <item>@string/nitter_tiekoetter_url</item>
-        <item>@string/nitter_jaydenha_url</item>
-        <item>@string/nitter_pp_ua_url</item>
         <item>@string/shitter_thepixora_url</item>
+        <item>@string/nitter_pp_ua_url</item>
+        <item>@string/nitter_netbub_url</item>
         <item>@string/nitter_mizuki_url</item>
         <item>@string/nitter_r4fo_url</item>
+        <item>@string/nitter_tiekoetter_url</item>
+        <item>@string/nitter_kareem_url</item>
+        <item>@string/nohup_cz_url</item>
+        <item>@string/nitter_jaydenha_url</item>
+        <item>@string/nitter_click_url</item>
+        <item>@string/nitter_miningtcup_url</item>
+        <item>@string/nitter_meowing_monster_url</item>
+        <item>@string/xnologin_url</item>
+        <item>@string/nitter_catsarch_url</item>
+        <item>@string/nitter_privacyredirect_url</item>
+        <item>@string/nitter_ip6arpa_url</item>
         <item>@string/nitter_xitter_cc_url</item>
+        <item>@string/shi_meowing_url</item>
+        <item>@string/xcopy_uk_url</item>
+        <item>@string/goyimx_url</item>
+        <item>@string/xitter_cf_url</item>
+        <item>@string/teapaw_org_url</item>
+        <item>@string/nitter_gq_url</item>
+        <item>@string/xitter_gq_url</item>
+        <item>@string/teapawt_org_url</item>
+        <item>@string/teapawt_net_url</item>
+    </string-array>
+    <string-array name="default_instance_urls" translatable="false">
+        <item>@string/nitter_mie_foundation_url</item>
+        <item>@string/shitter_thepixora_url</item>
+        <item>@string/nitter_pp_ua_url</item>
+        <item>@string/nitter_netbub_url</item>
+        <item>@string/nitter_mizuki_url</item>
+        <item>@string/nitter_r4fo_url</item>
+        <item>@string/nitter_tiekoetter_url</item>
+        <item>@string/nitter_kareem_url</item>
+        <item>@string/nitter_jaydenha_url</item>
+        <item>@string/nitter_click_url</item>
+        <item>@string/nitter_miningtcup_url</item>
+        <item>@string/nitter_meowing_monster_url</item>
+        <item>@string/xnologin_url</item>
+        <item>@string/tw_eir_nya_url</item>
+        <item>@string/nitter_xitter_cc_url</item>
+        <item>@string/shi_meowing_url</item>
+        <item>@string/xcopy_uk_url</item>
+        <item>@string/x_n0g_xyz_url</item>
+        <item>@string/goyimx_url</item>
+        <item>@string/xitter_cf_url</item>
+        <item>@string/teapaw_org_url</item>
+        <item>@string/nitter_gq_url</item>
+        <item>@string/xitter_gq_url</item>
+        <item>@string/teapawt_org_url</item>
+        <item>@string/teapawt_net_url</item>
+        <item>@string/nohup_cz_url</item>
+        <item>@string/nitter_catsarch_url</item>
+        <item>@string/nitter_privacyredirect_url</item>
+        <item>@string/nitter_ip6arpa_url</item>
         <item>@string/nitter_onion_lesbo_url</item>
         <item>@string/nitter_onion_dhgj_url</item>
         <item>@string/nitter_onion_catsarch_url</item>
     </string-array>
     <string-array name="tor_friendly_instance_urls" translatable="false">
-        <item>@string/xitter_url</item>
         <item>@string/nitter_mie_foundation_url</item>
+        <item>@string/shitter_thepixora_url</item>
+        <item>@string/nitter_pp_ua_url</item>
+        <item>@string/nitter_r4fo_url</item>
+        <item>@string/nitter_miningtcup_url</item>
+        <item>@string/goyimx_url</item>
+        <item>@string/xitter_cf_url</item>
+        <item>@string/teapaw_org_url</item>
+        <item>@string/nitter_gq_url</item>
+        <item>@string/xitter_gq_url</item>
+        <item>@string/teapawt_org_url</item>
+        <item>@string/teapawt_net_url</item>
     </string-array>
 
     <string name="subscription_options">Options for @%1$s</string>

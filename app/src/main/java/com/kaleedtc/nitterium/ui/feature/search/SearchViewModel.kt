@@ -97,12 +97,19 @@ class SearchViewModel(
             is SearchEvent.SaveGroups -> saveGroups(event.options)
             is SearchEvent.UpdateQuery -> {
                 if (event.query.isEmpty()) {
-                    setState { copy(searchQuery = "") }
+                    // Drop the stuck spinner so clear/research isn't blocked by a prior load.
+                    setState { copy(searchQuery = "", isLoading = false, isRefreshing = false) }
                 }
             }
             is SearchEvent.ToggleSearchBar -> {
                 if (event.active) {
-                    setState { copy(isSearchBarActive = true) }
+                    setState {
+                        copy(
+                            isSearchBarActive = true,
+                            isLoading = false,
+                            isRefreshing = false
+                        )
+                    }
                 } else {
                     setState {
                         copy(
@@ -131,7 +138,15 @@ class SearchViewModel(
                 processDeepLink(event.url)
             }
             is SearchEvent.OnPageStarted -> {
-                setState { copy(isLoading = true, currentUrl = event.url, isError = false, errorMessage = null) }
+                setState {
+                    copy(
+                        // Keep Search usable after Back—don't put the spinner over the bar.
+                        isLoading = !isSearchBarActive,
+                        currentUrl = event.url,
+                        isError = false,
+                        errorMessage = null
+                    )
+                }
                 checkIfProfile(event.url)
             }
             is SearchEvent.OnPageFinished -> {
@@ -159,7 +174,14 @@ class SearchViewModel(
                 toggleSubscription(event.username)
             }
             SearchEvent.Refresh -> {
-                setState { copy(isRefreshing = state.value.isConnected, isError = false) }
+                setState {
+                    copy(
+                        isRefreshing = state.value.isConnected,
+                        isLoading = state.value.isConnected,
+                        isError = false,
+                        loadGeneration = loadGeneration + 1
+                    )
+                }
             }
             SearchEvent.ClearError -> {
                 setState { copy(isError = false) }
@@ -195,7 +217,8 @@ class SearchViewModel(
                     searchQuery = query,
                     isSearchBarActive = false,
                     isError = false,
-                    isLoading = state.value.isConnected
+                    isLoading = state.value.isConnected,
+                    loadGeneration = loadGeneration + 1
                 ) 
             }
         }

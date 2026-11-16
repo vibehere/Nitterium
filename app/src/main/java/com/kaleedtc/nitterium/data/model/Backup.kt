@@ -12,7 +12,7 @@ enum class BackupScope { SUBSCRIPTIONS, SUBSCRIPTIONS_AND_GROUPS, SETTINGS, EVER
 
 @Serializable
 data class AppSettingsBackup(
-    val instanceUrl: String = "https://xitter.cf",
+    val instanceUrl: String = "https://shitter.thepixora.com",
     val dynamicColor: Boolean = true,
     val darkTheme: Boolean? = null,
     val trueBlack: Boolean = false,
@@ -34,6 +34,10 @@ data class AppSettingsBackup(
     val feedUsersPerBatch: Int = 10,
     val feedAutoLoadBatches: Boolean = true,
     val feedSpreadAcrossInstances: Boolean = false,
+    val feedPreferRss: Boolean = false,
+    val socksPreferOnionInstances: Boolean = true,
+    val disableWebJavascript: Boolean = false,
+    val disabledInstanceUrls: Set<String> = emptySet(),
     val mutedWords: List<String> = emptyList()
 ) {
     fun socksProxy(): SocksProxySettings = SocksProxySettings(
@@ -127,7 +131,8 @@ object BackupCodec {
         backup.settings?.let { settings ->
             require(settings.defaultTab in setOf("Search", "Subscriptions", "Feed", "Settings")) { "Invalid default tab" }
             val urls = settings.customInstances + settings.instanceUrl + settings.frontendModes.keys +
-                settings.detectedFrontends.keys + settings.instanceOptions.keys
+                settings.detectedFrontends.keys + settings.instanceOptions.keys +
+                settings.disabledInstanceUrls
             require(urls.all(::isInstanceUrl)) { "Invalid instance URL" }
             require(settings.detectedFrontends.values.none { it == FrontendType.AUTO }) { "Invalid detected frontend" }
             require(settings.instanceOptions.values.none { it.frontend == FrontendType.AUTO }) { "Invalid instance options" }

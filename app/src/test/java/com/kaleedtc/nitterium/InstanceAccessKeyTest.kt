@@ -66,4 +66,14 @@ class InstanceAccessKeyTest {
         assertFalse(UserPreferencesRepository.sanitizeInstanceKey("***").isNotEmpty())
         assertTrue(UserPreferencesRepository.sanitizeInstanceKey("ok_1").isNotEmpty())
     }
+
+    @Test fun browserUserAgentDropsWebViewMarkers() {
+        assertEquals(
+            "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36",
+            UserPreferencesRepository.browserUserAgent(
+                "Mozilla/5.0 (Linux; Android 15; wv) AppleWebKit/537.36 " +
+                    "Version/4.0 Chrome/140.0 Mobile Safari/537.36"
+            )
+        )
+    }
 }

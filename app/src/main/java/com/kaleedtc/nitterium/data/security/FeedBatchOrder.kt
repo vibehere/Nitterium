@@ -1,6 +1,7 @@
 package com.kaleedtc.nitterium.data.security
 
 import com.kaleedtc.nitterium.data.model.Subscription
+import kotlin.random.Random
 
 /**
  * Builds the username order for multi-user timeline requests.
@@ -11,17 +12,31 @@ object FeedBatchOrder {
         subscriptions.filterNot { it.mutedInFeed }.map { it.username }
 
     /**
+     * NewPipe-style: reshuffle subscription order each refresh so request
+     * sequencing is not a stable fingerprint of the follow list.
+     */
+    fun shuffle(usernames: List<String>, seed: Long): List<String> =
+        usernames
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+            .shuffled(Random(seed))
+
+    /**
      * For Feed All with a small accounts-per-request value, spread the first
      * request across the list so quiet accounts at the top do not dominate.
      * Group feeds keep subscription order so members stay in early batches.
+     * When [shuffleSeed] is set, order is randomized first (NewPipe-like).
      */
     fun orderForFeed(
         usernames: List<String>,
         chunkSize: Int,
-        diversify: Boolean
+        diversify: Boolean,
+        shuffleSeed: Long? = null
     ): List<String> {
-        if (!diversify || usernames.size <= chunkSize) return usernames
-        return diversifyUsernames(usernames, chunkSize)
+        val base = if (shuffleSeed != null) shuffle(usernames, shuffleSeed) else usernames
+        if (!diversify || base.size <= chunkSize) return base
+        return diversifyUsernames(base, chunkSize)
     }
 
     fun diversifyUsernames(usernames: List<String>, chunkSize: Int): List<String> {

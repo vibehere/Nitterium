@@ -44,12 +44,11 @@ class UrlPolicyTest {
         assertTrue(UrlPolicy.displayHost(onion).contains("…"))
         val builtIn = listOf("https://xitter.cf", "https://public.example", onion)
         val groups = UrlPolicy.groupedInstanceChoices(
-            builtIn, setOf("https://mine.example"), "https://xitter.cf", listOf("https://xitter.cf")
+            builtIn, setOf("https://mine.example"), "https://xitter.cf"
         )
         assertEquals(
             listOf(
-                UrlPolicy.InstanceGroup.TorFriendly to listOf("https://xitter.cf"),
-                UrlPolicy.InstanceGroup.Public to listOf("https://public.example"),
+                UrlPolicy.InstanceGroup.Public to listOf("https://xitter.cf", "https://public.example"),
                 UrlPolicy.InstanceGroup.Onion to listOf(onion),
                 UrlPolicy.InstanceGroup.Custom to listOf("https://mine.example"),
             ),
@@ -79,6 +78,15 @@ class UrlPolicyTest {
         }
     }
 
+    @Test fun webViewLocalDocumentsAreNotTreatedAsRemoteOrigins() {
+        assertTrue(UrlPolicy.isWebViewLocalDocumentUrl("data:text/html;charset=utf-8;base64,PGh0bWw+"))
+        assertTrue(UrlPolicy.isWebViewLocalDocumentUrl("about:blank"))
+        assertTrue(UrlPolicy.isWebViewLocalDocumentUrl("blob:https://instance.test/uuid"))
+        assertFalse(UrlPolicy.isWebViewLocalDocumentUrl("https://instance.test/alice"))
+        assertFalse(UrlPolicy.isWebViewLocalDocumentUrl(null))
+        assertFalse(UrlPolicy.sameOrigin("https://instance.test", "data:text/html,hi"))
+    }
+
     @Test fun nativeMediaRejectsLocalUrisAndHonorsExactDomainBoundaries() {
         listOf("file:///data/user/0/app/image", "content://provider/image", "data:image/png;base64,x",
             "http://instance.test/image", "https://user:pass@instance.test/image").forEach {
@@ -89,5 +97,12 @@ class UrlPolicyTest {
         assertNotNull(UrlPolicy.mediaUrl("https://notx.com/image", true))
         assertNotNull(UrlPolicy.mediaUrl("https://pbs.twimg.com.evil.test/image", true))
         assertNotNull(UrlPolicy.mediaUrl("https://pbs.twimg.com/image", false))
+        // Tor onion media is HTTP; must not be treated like clearnet cleartext.
+        assertNotNull(
+            UrlPolicy.mediaUrl(
+                "http://nitteraaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/pic/a.jpg",
+                false
+            )
+        )
     }
 }

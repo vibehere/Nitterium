@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FitnessCenter
@@ -45,16 +46,17 @@ import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Laptop
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.SportsBasketball
 import androidx.compose.material3.AlertDialog
@@ -63,8 +65,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -433,10 +433,31 @@ private fun GroupMembersDialog(
     onDismiss: () -> Unit,
     onConfirm: (Set<String>) -> Unit
 ) {
-    var selected by rememberSaveable(group.id) {
-        mutableStateOf(
-            subscriptions.filter { group.id in it.groupIds }.map { it.username }.toSet()
-        )
+    val initialMembers = rememberSaveable(group.id) {
+        subscriptions.filter { group.id in it.groupIds }.map { it.username }.toSet()
+    }
+    var selected by rememberSaveable(group.id) { mutableStateOf(initialMembers) }
+    var query by rememberSaveable(group.id) { mutableStateOf("") }
+    val normalizedQuery = query.trim().removePrefix("@")
+    val filtered = remember(subscriptions, normalizedQuery) {
+        if (normalizedQuery.isEmpty()) {
+            subscriptions
+        } else {
+            subscriptions.filter { it.username.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
+    val (inGroup, notInGroup) = remember(filtered, initialMembers) {
+        memberSections(filtered, initialMembers)
+    }
+
+    fun isSelected(username: String) = selected.any { it.equals(username, ignoreCase = true) }
+
+    fun toggle(username: String) {
+        selected = if (isSelected(username)) {
+            selected.filterNot { it.equals(username, ignoreCase = true) }.toSet()
+        } else {
+            selected + username
+        }
     }
 
     AlertDialog(
@@ -446,32 +467,91 @@ private fun GroupMembersDialog(
             if (subscriptions.isEmpty()) {
                 Text(stringResource(R.string.no_subscriptions_for_group))
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(subscriptions, key = { it.username }) { subscription ->
-                        val checked = selected.any { it.equals(subscription.username, ignoreCase = true) }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .toggleable(
-                                    value = checked,
-                                    enabled = !isSaving,
-                                    role = Role.Checkbox,
-                                    onValueChange = {
-                                        selected = if (checked) {
-                                            selected.filterNot {
-                                                it.equals(subscription.username, ignoreCase = true)
-                                            }.toSet()
-                                        } else {
-                                            selected + subscription.username
-                                        }
-                                    }
-                                )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text(stringResource(R.string.search_group_members)) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.clear_search))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        enabled = !isSaving,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TextButton(
+                            enabled = !isSaving && filtered.isNotEmpty(),
+                            onClick = {
+                                selected = selected + filtered.map { it.username }
+                            }
                         ) {
-                            Checkbox(checked = checked, onCheckedChange = null)
-                            Spacer(modifier = Modifier.size(8.dp))
-                            Text("@${subscription.username}")
+                            Text(stringResource(R.string.group_members_select_visible))
+                        }
+                        TextButton(
+                            enabled = !isSaving && filtered.isNotEmpty(),
+                            onClick = {
+                                val visible = filtered.map { it.username.lowercase() }.toSet()
+                                selected = selected.filterNot { it.lowercase() in visible }.toSet()
+                            }
+                        ) {
+                            Text(stringResource(R.string.group_members_clear_visible))
+                        }
+                    }
+                    if (filtered.isEmpty()) {
+                        Text(stringResource(R.string.no_matching_group_members))
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.height(320.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            if (inGroup.isNotEmpty()) {
+                                item {
+                                    Text(
+                                        text = stringResource(
+                                            R.string.group_members_in_group,
+                                            filtered.count { isSelected(it.username) }
+                                        ),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                                    )
+                                }
+                                items(inGroup, key = { "in-${it.username}" }) { subscription ->
+                                    MemberToggleRow(
+                                        username = subscription.username,
+                                        checked = isSelected(subscription.username),
+                                        enabled = !isSaving,
+                                        onToggle = { toggle(subscription.username) }
+                                    )
+                                }
+                            }
+                            if (notInGroup.isNotEmpty()) {
+                                item {
+                                    Text(
+                                        text = stringResource(R.string.group_members_not_in_group),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                    )
+                                }
+                                items(notInGroup, key = { "out-${it.username}" }) { subscription ->
+                                    MemberToggleRow(
+                                        username = subscription.username,
+                                        checked = isSelected(subscription.username),
+                                        enabled = !isSaving,
+                                        onToggle = { toggle(subscription.username) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -493,6 +573,43 @@ private fun GroupMembersDialog(
     )
 }
 
+/**
+ * Sections follow membership when the dialog opened, not the live selection, so an
+ * accidental untick leaves the row in place where it can be ticked again.
+ */
+internal fun memberSections(
+    subscriptions: List<Subscription>,
+    initialMembers: Set<String>
+): Pair<List<Subscription>, List<Subscription>> =
+    subscriptions.partition { sub ->
+        initialMembers.any { it.equals(sub.username, ignoreCase = true) }
+    }
+
+@Composable
+private fun MemberToggleRow(
+    username: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = { onToggle() }
+            )
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null, enabled = enabled)
+        Spacer(modifier = Modifier.size(8.dp))
+        Text("@$username", style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
 @Composable
 fun GroupCard(
     name: String,
@@ -507,9 +624,6 @@ fun GroupCard(
     selected: Boolean = false,
     selectionMode: Boolean = false
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    val hasMenu = !selectionMode && (onEdit != null || onManageMembers != null || onDelete != null)
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -553,47 +667,37 @@ fun GroupCard(
                             .padding(4.dp)
                     )
                 }
-                if (hasMenu) {
-                    Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                        IconButton(onClick = { menuExpanded = true }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = stringResource(R.string.more_options),
-                                tint = contentColorFor(color)
-                            )
+                if (!selectionMode && (onManageMembers != null || onEdit != null || onDelete != null)) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        if (onManageMembers != null) {
+                            IconButton(onClick = onManageMembers) {
+                                Icon(
+                                    imageVector = Icons.Default.PersonAdd,
+                                    contentDescription = stringResource(R.string.manage_group_members),
+                                    tint = contentColorFor(color)
+                                )
+                            }
                         }
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false }
-                        ) {
-                            if (onManageMembers != null) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.manage_group_members)) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onManageMembers()
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Group, contentDescription = null)
-                                    }
+                        if (onEdit != null) {
+                            IconButton(onClick = onEdit) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = stringResource(R.string.edit_group_action),
+                                    tint = contentColorFor(color)
                                 )
                             }
-                            if (onEdit != null) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.edit_group_action)) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onEdit()
-                                    }
-                                )
-                            }
-                            if (onDelete != null) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.delete)) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onDelete()
-                                    }
+                        }
+                        if (onDelete != null) {
+                            IconButton(onClick = onDelete) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.delete),
+                                    tint = contentColorFor(color)
                                 )
                             }
                         }

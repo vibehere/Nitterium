@@ -54,11 +54,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kaleedtc.nitterium.ui.common.GroupAssignmentDialog
 import com.kaleedtc.nitterium.ui.common.GroupAssignmentMenu
+import com.kaleedtc.nitterium.ui.common.LoadingIndicator
 import com.kaleedtc.nitterium.ui.common.SubscriptionActionButton
 import androidx.compose.ui.platform.LocalResources
 import com.kaleedtc.nitterium.ui.common.LocalFullScreenMode
@@ -142,6 +144,12 @@ fun SearchContent(
             if (state.isSearchBarActive) searchBarState.animateToExpanded()
             else searchBarState.animateToCollapsed()
         }
+        // Select prior query so the next keypress replaces it immediately.
+        if (state.isSearchBarActive && textFieldState.text.isNotEmpty()) {
+            textFieldState.edit {
+                selection = TextRange(0, length)
+            }
+        }
     }
     LaunchedEffect(searchBarState) {
         snapshotFlow { searchBarState.targetValue == SearchBarValue.Expanded }
@@ -193,6 +201,9 @@ fun SearchContent(
              // Force reload current URL instead of trying to go back on a dead WebView
              onEvent(SearchEvent.LoadUrl(state.currentUrl))
         } else {
+            // Cancel the in-flight load so Back isn't followed by a long spinner
+            // that blocks opening Search again.
+            webView?.stopLoading()
             webView?.goBack()
         }
     }
@@ -229,7 +240,10 @@ fun SearchContent(
                                 if (state.currentUsername != null && !state.isError) {
                                     GroupAssignmentMenu(state.currentUsername) { onEvent(SearchEvent.EditGroups) }
                                 }
-                                IconButton(onClick = { onEvent(SearchEvent.ToggleSearchBar(true)) }) {
+                                IconButton(onClick = {
+                                    webView?.stopLoading()
+                                    onEvent(SearchEvent.ToggleSearchBar(true))
+                                }) {
                                     Icon(Icons.Default.Search, contentDescription = stringResource(R.string.nav_search))
                                 }
                             },
@@ -272,15 +286,11 @@ fun SearchContent(
                             isBlockDirectXEnabled = state.isBlockDirectXEnabled,
                             darkTheme = isDarkTheme,
                             isRefreshing = state.isRefreshing,
+                            loadGeneration = state.loadGeneration,
                             isProfileView = state.currentUsername != null,
                             filterSubscriptions = state.filterSubscriptions,
                             mutedWords = state.mutedWords,
-                            onRefresh = { 
-                                onEvent(SearchEvent.Refresh)
-                                if (!state.isError) {
-                                    webView?.reload()
-                                }
-                            },
+                            onRefresh = { onEvent(SearchEvent.Refresh) },
                             onPageStarted = { onEvent(SearchEvent.OnPageStarted(it)) },
                             onPageFinished = { url, _ ->
                                 onEvent(SearchEvent.OnPageFinished(url)) 
@@ -293,14 +303,14 @@ fun SearchContent(
                     }
                 }
             }
-        } else if (!state.isLoading) {
-            // HOME MODE: Centered welcome content
+        } else {
+            // HOME MODE: Centered welcome content (keep visible during loads so
+            // the search field above stays usable without waiting).
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // Welcome Content
                 Icon(
                     imageVector = Icons.Filled.Search,
                     contentDescription = null,
@@ -320,18 +330,15 @@ fun SearchContent(
                 )
             }
 
-            // Snackbar host for Home mode
             Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)) {
                 SnackbarHost(snackbarHostState)
             }
         }
 
         // --- Layer 2: Search Bar Overlay ---
-        // Show SearchBar if:
-        // 1. We are Home (currentUrl empty) -> Always show (Inactive/Active)
-        // 2. OR We are actively searching (isSearchBarActive) -> Show (Active)
-        // AND not in full screen
-        if ((state.currentUrl.isEmpty() || state.isSearchBarActive) && !state.isLoading && !isFullScreen) {
+        // Show even while a previous page is still loading so the user can
+        // clear/research immediately after Back instead of waiting on the WebView.
+        if ((state.currentUrl.isEmpty() || state.isSearchBarActive) && !isFullScreen) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -343,6 +350,7 @@ fun SearchContent(
                         textFieldState = textFieldState,
                         searchBarState = searchBarState,
                         onSearch = { query ->
+                            webView?.stopLoading()
                             onEvent(SearchEvent.PerformSearch(query))
                             focusManager.clearFocus()
                         },
@@ -359,6 +367,7 @@ fun SearchContent(
                         trailingIcon = {
                             if (textFieldState.text.isNotEmpty()) {
                                 IconButton(onClick = {
+                                    webView?.stopLoading()
                                     textFieldState.setTextAndPlaceCursorAtEnd("")
                                     onEvent(SearchEvent.UpdateQuery(""))
                                 }) {
@@ -395,6 +404,7 @@ fun SearchContent(
                             item {
                                 ListItem(
                                     onClick = {
+                                        webView?.stopLoading()
                                         onEvent(SearchEvent.PerformSearch(query))
                                         focusManager.clearFocus()
                                     },
@@ -409,9 +419,9 @@ fun SearchContent(
             }
         }
 
-        // Loading Indicator (Global)
-        com.kaleedtc.nitterium.ui.common.LoadingIndicator(
-            isLoading = state.isLoading
+        LoadingIndicator(
+            modifier = Modifier.align(Alignment.TopCenter),
+            isLoading = state.isLoading && !state.isSearchBarActive
         )
     }
 }

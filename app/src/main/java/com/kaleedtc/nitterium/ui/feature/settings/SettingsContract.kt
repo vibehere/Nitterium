@@ -4,6 +4,8 @@ import com.kaleedtc.nitterium.data.model.NitterInstanceSettings
 import com.kaleedtc.nitterium.data.frontend.FrontendType
 import android.net.Uri
 import com.kaleedtc.nitterium.data.model.BackupScope
+import com.kaleedtc.nitterium.data.model.InstanceDirectoryEntry
+import com.kaleedtc.nitterium.data.model.InstancePoolPreset
 import com.kaleedtc.nitterium.data.model.NitteriumBackup
 import com.kaleedtc.nitterium.data.model.SocksProxySettings
 
@@ -11,25 +13,37 @@ data class SettingsState(
     val frontendMode: FrontendType = FrontendType.AUTO,
     val frontend: FrontendType = FrontendType.NITTER,
     val isLoading: Boolean = true,
-    val instanceUrl: String = "https://xitter.cf",
+    val instanceUrl: String = "https://shitter.thepixora.com",
     val isDynamicColor: Boolean = true,
     val isTrueBlack: Boolean = false,
     val isSiteHeaderEnabled: Boolean = false,
     val isNavLabelsEnabled: Boolean = true,
     val isBlockDirectXEnabled: Boolean = false,
+    val disableWebJavascript: Boolean = false,
+    val disabledInstanceUrls: Set<String> = emptySet(),
     val defaultTab: String = "Search",
     val isDarkTheme: Boolean? = null, // null = System
     val availableInstances: List<String> = emptyList(),
     val customInstances: List<String> = emptyList(),
+    val discoveredInstances: List<String> = emptyList(),
+    val instanceCatalog: List<InstanceDirectoryEntry> = emptyList(),
+    val instancePoolPresets: List<InstancePoolPreset> = emptyList(),
+    val activeInstancePoolPresetId: String? = null,
     val instanceSettings: NitterInstanceSettings = NitterInstanceSettings(),
     val appVersion: String = "",
     val showReleaseNotesAfterUpdates: Boolean = true,
     val isBackupBusy: Boolean = false,
+    val isScanningInstances: Boolean = false,
+    val isProbingInstances: Boolean = false,
+    val instanceProbeChecked: Int = 0,
+    val instanceProbeTotal: Int = 0,
     val backupToRestore: NitteriumBackup? = null,
     val socksProxy: SocksProxySettings = SocksProxySettings(),
+    val socksPreferOnionInstances: Boolean = true,
     val instanceKey: String = "",
     val feedUsersPerBatch: Int = 10,
     val feedSpreadAcrossInstances: Boolean = false,
+    val feedPreferRss: Boolean = false,
     val mutedWords: List<String> = emptyList()
 )
 
@@ -49,16 +63,26 @@ sealed interface SettingsEvent {
     data class UpdateSiteHeader(val enabled: Boolean) : SettingsEvent
     data class UpdateNavLabels(val enabled: Boolean) : SettingsEvent
     data class UpdateBlockDirectX(val enabled: Boolean) : SettingsEvent
+    data class UpdateDisableWebJavascript(val enabled: Boolean) : SettingsEvent
+    data class SetInstanceDisabled(val url: String, val disabled: Boolean) : SettingsEvent
     data class UpdateDefaultTab(val tab: String) : SettingsEvent
     data class UpdateDarkTheme(val isDark: Boolean?) : SettingsEvent
     data class UpdateShowReleaseNotes(val enabled: Boolean) : SettingsEvent
     data class UpdateInstanceSetting(val key: String, val value: Boolean) : SettingsEvent
     data class UpdateSocksProxy(val settings: SocksProxySettings) : SettingsEvent
+    data class UpdateSocksPreferOnion(val enabled: Boolean) : SettingsEvent
     data class UpdateInstanceKey(val key: String) : SettingsEvent
     data class UpdateFeedUsersPerBatch(val size: Int) : SettingsEvent
     data class UpdateFeedSpreadAcrossInstances(val enabled: Boolean) : SettingsEvent
+    data class UpdateFeedPreferRss(val enabled: Boolean) : SettingsEvent
     data class AddMutedWord(val word: String) : SettingsEvent
     data class RemoveMutedWord(val word: String) : SettingsEvent
+    data object ScanPublicInstances : SettingsEvent
+    data object ProbeInstanceAvailability : SettingsEvent
+    data class SaveInstancePoolPreset(val name: String, val urls: List<String>, val id: String? = null) : SettingsEvent
+    data class RemoveInstancePoolPreset(val id: String) : SettingsEvent
+    data class SetActiveInstancePoolPreset(val id: String?) : SettingsEvent
+    data object ClearFeedCache : SettingsEvent
     data object ClearInstanceCookies : SettingsEvent
     data class OpenUrl(val url: String) : SettingsEvent
 }

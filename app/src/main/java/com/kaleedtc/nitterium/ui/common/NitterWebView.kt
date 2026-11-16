@@ -67,13 +67,43 @@ import com.kaleedtc.nitterium.data.model.Subscription
 import com.kaleedtc.nitterium.data.security.FeedBatchAppend
 import com.kaleedtc.nitterium.data.security.FeedFilterRules
 import com.kaleedtc.nitterium.data.security.FeedFilterScript
+import com.kaleedtc.nitterium.data.security.NoJsHtmlDocument
 import com.kaleedtc.nitterium.data.security.PrivacyHeaders
+import com.kaleedtc.nitterium.data.security.TimelineHtml
 import com.kaleedtc.nitterium.data.security.UrlPolicy
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 private fun WebView.loadPrivacyUrl(url: String) {
     loadUrl(url, PrivacyHeaders.navigationHeaders())
+}
+
+/** HTTPS/onion base for [WebView.loadDataWithBaseURL]; never "/" or blank (those become data:). */
+private fun feedDocumentBaseUrl(instance: String, pageUrl: String): String? {
+    UrlPolicy.origin(instance)?.let { return "$it/" }
+    return UrlPolicy.origin(pageUrl)?.let { "$it/" }
+}
+
+/** Start loading older posts while this many screens of feed remain below. */
+private const val FEED_OLDER_PREFETCH_SCREENS = 2
+
+private class FeedShellDocument(
+    val base: String,
+    val html: String,
+    val key: String,
+    val peerCount: Int
+)
+
+/** [historyUrl] keeps the instance origin so the page bridge and JS injection attach. */
+private fun WebView.loadFeedDocument(base: String, html: String, historyUrl: String) {
+    loadDataWithBaseURL(
+        base,
+        html,
+        "text/html",
+        StandardCharsets.UTF_8.name(),
+        historyUrl.ifBlank { base }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,13 +124,27 @@ fun NitterWebView(
     frontend: FrontendType = FrontendType.NITTER,
     onFrontendDetected: (String, FrontendType) -> Unit = { _, _ -> },
     isRefreshing: Boolean = false,
+    /** Increment to clear WebView history and force-load [url] (error Retry / pull-refresh). */
+    loadGeneration: Int = 0,
     isProfileView: Boolean = false,
     isFeedView: Boolean = false,
     feedAppendBatchUrls: List<String> = emptyList(),
     feedAppendHtmlChunks: List<String> = emptyList(),
+    /** OkHttp shell HTML for no-JS Feed All merges. */
+    feedShellHtml: String? = null,
+    /** Stylesheet links from the shell host so Feed All matches normal Nitter posts. */
+    feedShellStyleAssets: String? = null,
     /** Subscriptions used to resolve per-user feed filters (retweets/replies/mute). */
     filterSubscriptions: List<Subscription> = emptyList(),
     mutedWords: List<String> = emptyList(),
+    /**
+     * Feed All owns post/profile/comment navigation. Parent calls the returned
+     * goBack when the in-app back affordance is used; it remounts the retained
+     * shell without WebView history or a network refetch.
+     */
+    onFeedBrowseBackReady: ((() -> Boolean)?) -> Unit = {},
+    onFeedBrowseCanGoBackChange: (Boolean) -> Unit = {},
+    onFeedNearBottom: () -> Unit = {},
     onRefresh: () -> Unit = {},
     onAvatarFound: (String, String) -> Unit = { _, _ -> },
 ) {
@@ -120,6 +164,8 @@ fun NitterWebView(
     val preferencesRepository = remember { UserPreferencesRepository(context) }
     val instanceKeys by preferencesRepository.instanceKeys.collectAsState(initial = emptyMap())
     val instanceKey = instanceKeys[UserPreferencesRepository.hostOf(url)].orEmpty()
+    val disableWebJavascript by preferencesRepository.disableWebJavascript.collectAsState(initial = false)
+    val javaScriptEnabled = !disableWebJavascript
 
     DisposableEffect(Unit) {
         onDispose {
@@ -279,27 +325,9 @@ fun NitterWebView(
         """
     } else ""
 
-    fun isProfileUrl(currentUrl: String?): Boolean {
-        return !currentUrl.isNullOrEmpty() && try {
-            val uri = URI(currentUrl)
-            val path = uri.path.trim('/')
-            if (path.isEmpty()) return false
-
-            val segments = path.split('/')
-            val firstSegment = segments[0].lowercase()
-            val reservedWords = setOf(
-                "search", "settings", "about", "pic", "status",
-                "logo.png", "favicon.ico", "robots.txt", "i", "explore"
-            )
-
-            !reservedWords.contains(firstSegment)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     fun getSiteHeaderCss(currentUrl: String?): String {
-        val isActuallyFeedRoot = isFeedView && currentUrl != null && try {
+        // Feed All root only — never treat an in-page profile browse as the multi-user shell.
+        val isActuallyFeedRoot = isFeedView && !isProfileView && currentUrl != null && try {
             FrontendAdapter.sameOrigin(url, currentUrl) &&
                 URI(url).path.trimEnd('/') == URI(currentUrl).path.trimEnd('/')
         } catch (_: Exception) {
@@ -312,21 +340,13 @@ fun NitterWebView(
         } else ""
         if (isSiteHeaderEnabled) return feedHeadingCss
 
-        // Prioritize actual URL check. If the URL is a global-reserved page (like /search),
-        // we always use strict CSS to hide the search bar, even if the screen context is "Profile".
-        val isProfile = if (currentUrl.isNullOrEmpty()) isProfileView else isProfileUrl(currentUrl)
-
-        var css = if (isProfile) {
-            "nav, .site-header, .header, .search-header"
-        } else {
-            "nav, .site-header, .header, .search-header, .timeline-header, .search-bar, form[action*=\"search\"], .search-field, .search-panel"
-        }
-        
+        // Always use the strict chrome hide (including on profiles). A weaker profile
+        // list left search/Preferences visible once instance style.css was restored.
+        var css = TimelineHtml.SITE_CHROME_HIDE_CSS
         if (isActuallyFeedRoot) {
-            css += ", .profile-card, .profile-tabs, .profile-banner, .profile-header, .timeline-header, ul.tab"
+            css += TimelineHtml.FEED_SHELL_EXTRA_HIDE_CSS
         }
-
-        return "$css { display: none !important; } $feedHeadingCss"
+        return "$css $feedHeadingCss"
     }
 
     fun getJsInjection(currentUrl: String?): String {
@@ -363,6 +383,8 @@ fun NitterWebView(
 
                 updateStyle('general-cleanup', `
                     body, .container, .timeline-container { padding-top: 0 !important; margin-top: 0 !important; }
+                    body.fixed-nav .container, body.fixed-nav .timeline-container { padding-top: 0 !important; }
+                    body.fixed-nav .profile-tab { top: 0 !important; }
                     .tabs { margin-top: 0 !important; padding-top: 0 !important; }
                     .timeline { margin-top: 0 !important; border-top: none !important; border-radius: 0 !important; }
                     .tweet-published { display: none !important; }
@@ -524,12 +546,46 @@ fun NitterWebView(
     val latestOnAvatarFound by rememberUpdatedState(onAvatarFound)
     val latestFeedAppendBatches by rememberUpdatedState(feedAppendBatchUrls)
     val latestFeedAppendHtml by rememberUpdatedState(feedAppendHtmlChunks)
+    val latestFeedShellHtml by rememberUpdatedState(feedShellHtml)
+    val latestFeedShellStyleAssets by rememberUpdatedState(feedShellStyleAssets)
     val latestIsFeedView by rememberUpdatedState(isFeedView)
+    val latestIsProfileView by rememberUpdatedState(isProfileView)
     val latestFilterSubscriptions by rememberUpdatedState(filterSubscriptions)
     val latestMutedWords by rememberUpdatedState(mutedWords)
+    val latestJavaScriptEnabled by rememberUpdatedState(javaScriptEnabled)
     var injectedHtmlCount by remember(url) { mutableIntStateOf(0) }
+    var loadedNoJsDocumentKey by remember(url) { mutableStateOf<String?>(null) }
+    // Owned Feed All browse stack (post → comments → profile). WebView history is
+    // not used for back — goBack remounts the retained OkHttp shell in memory.
+    val feedNavStackRef = remember { AtomicReference(emptyList<String>()) }
+    var feedNavDepth by remember { mutableIntStateOf(0) }
+    // True while the in-memory Feed All document is on screen. A remote page start is
+    // only a user click when it leaves this document; any other live load (restore,
+    // redirects) must not be pushed or the shell never mounts until Back is pressed.
+    val feedShellShowingRef = remember { AtomicBoolean(false) }
+    var feedShellShowing by remember { mutableStateOf(false) }
+    // The shell reports the feed URL as its page URL; this marks its own page start.
+    val feedShellLoadPendingRef = remember { AtomicBoolean(false) }
+
+    fun setFeedNavStack(stack: List<String>) {
+        feedNavStackRef.set(stack)
+        feedNavDepth = stack.size
+    }
+
+    fun setFeedShellShowing(showing: Boolean): Boolean {
+        val was = feedShellShowingRef.getAndSet(showing)
+        feedShellShowing = showing
+        return was
+    }
+
+    fun mountFeedDocument(view: WebView, base: String, html: String) {
+        setFeedShellShowing(true)
+        feedShellLoadPendingRef.set(true)
+        view.loadFeedDocument(base, html, url)
+    }
 
     fun applyFeedFilters(view: WebView, pageUrl: String?) {
+        if (!latestJavaScriptEnabled) return
         if (!UrlPolicy.sameOrigin(selectedInstanceUrl, pageUrl ?: view.url)) return
         val options = InstanceSettingsCookies.read(
             runCatching { CookieManager.getInstance().getCookie(pageUrl ?: url).orEmpty() }.getOrDefault(""),
@@ -550,6 +606,124 @@ fun NitterWebView(
             null
         )
     }
+
+    fun noJsStyleCss(pageUrl: String?): String = buildString {
+        append(currentThemeCss)
+        append('\n')
+        append(trueBlackCss)
+        append('\n')
+        append(getSiteHeaderCss(pageUrl))
+        append(
+            """
+            body, .container, .timeline-container { padding-top: 0 !important; margin-top: 0 !important; }
+            body.fixed-nav .container, body.fixed-nav .timeline-container { padding-top: 0 !important; }
+            body.fixed-nav .profile-tab { top: 0 !important; }
+            .tabs { margin-top: 0 !important; padding-top: 0 !important; }
+            .timeline { margin-top: 0 !important; border-top: none !important; border-radius: 0 !important; }
+            .tweet-published { display: none !important; }
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * Chrome-free Feed All document: shell + every peer page received so far, merged,
+     * filtered and sorted in one load so nothing races a post-load JS inject.
+     */
+    fun feedShellCss(): String =
+        noJsStyleCss(url) + TimelineHtml.SITE_CHROME_HIDE_CSS + TimelineHtml.FEED_SHELL_EXTRA_HIDE_CSS
+
+    /** Identifies the mounted shell document; JS mode injects later peers in place. */
+    fun feedShellKey(): String? {
+        val shell = latestFeedShellHtml
+        if (!latestIsFeedView || shell.isNullOrBlank() || url.isBlank()) return null
+        val styled = "${shell.length}:${feedShellCss().length}:${latestFeedShellStyleAssets.orEmpty().length}"
+        return if (latestJavaScriptEnabled) {
+            "js:$styled"
+        } else {
+            "nojs:$styled:${latestFeedAppendHtml.size}:${latestFilterSubscriptions.hashCode()}:${latestMutedWords.hashCode()}"
+        }
+    }
+
+    fun buildFeedShellDocument(): FeedShellDocument? {
+        val key = feedShellKey() ?: return null
+        val shell = latestFeedShellHtml ?: return null
+        val base = feedDocumentBaseUrl(latestInstance, url) ?: return null
+        val options = InstanceSettingsCookies.read(
+            runCatching { CookieManager.getInstance().getCookie(url).orEmpty() }.getOrDefault(""),
+            frontend
+        )
+        val users = FeedFilterRules.perUserFilters(
+            latestFilterSubscriptions,
+            globalHideRetweets = options.hideRetweets,
+            globalHideReplies = options.hideReplies
+        )
+        val peers = latestFeedAppendHtml
+        val html = NoJsHtmlDocument.prepare(
+            html = shell,
+            styleCss = feedShellCss(),
+            peerPages = peers,
+            filterUsers = users,
+            mutedWords = latestMutedWords,
+            globalHideRetweets = options.hideRetweets,
+            globalHideReplies = options.hideReplies,
+            styleAssets = latestFeedShellStyleAssets.orEmpty()
+        )
+        return FeedShellDocument(base = base, html = html, key = key, peerCount = peers.size)
+    }
+
+    fun remountMergedFeedShell(view: WebView): Boolean {
+        val document = buildFeedShellDocument() ?: return false
+        loadedNoJsDocumentKey = document.key
+        injectedHtmlCount = document.peerCount
+        view.stopLoading()
+        view.alpha = 1f
+        view.clearHistory()
+        mountFeedDocument(view, document.base, document.html)
+        return true
+    }
+
+    fun pushFeedBrowse(view: WebView, dest: String) {
+        val stack = feedNavStackRef.get()
+        if (stack.lastOrNull()?.trimEnd('/')?.equals(dest.trimEnd('/'), ignoreCase = true) == true) {
+            return
+        }
+        setFeedNavStack(stack + dest)
+        feedShellLoadPendingRef.set(false)
+        view.stopLoading()
+        view.alpha = 1f
+        view.loadPrivacyUrl(dest)
+    }
+
+    fun popFeedBrowse(view: WebView): Boolean {
+        val stack = feedNavStackRef.get()
+        if (stack.isEmpty()) {
+            if (feedShellShowingRef.get()) return false
+            return remountMergedFeedShell(view)
+        }
+        val next = stack.dropLast(1)
+        setFeedNavStack(next)
+        if (next.isEmpty()) {
+            return remountMergedFeedShell(view)
+        }
+        view.stopLoading()
+        view.alpha = 1f
+        view.loadPrivacyUrl(next.last())
+        return true
+    }
+
+    val latestPushFeedBrowse by rememberUpdatedState { v: WebView, dest: String -> pushFeedBrowse(v, dest) }
+    val latestPopFeedBrowse by rememberUpdatedState { v: WebView -> popFeedBrowse(v) }
+    val latestSyncFeedNavTip by rememberUpdatedState { pageUrl: String ->
+        val stack = feedNavStackRef.get()
+        if (stack.isNotEmpty() &&
+            !stack.last().trimEnd('/').equals(pageUrl.trimEnd('/'), ignoreCase = true)
+        ) {
+            setFeedNavStack(stack.dropLast(1) + pageUrl)
+        }
+    }
+    val latestOnFeedBrowseBackReady by rememberUpdatedState(onFeedBrowseBackReady)
+    val latestOnFeedBrowseCanGoBackChange by rememberUpdatedState(onFeedBrowseCanGoBackChange)
+    val latestOnFeedNearBottom by rememberUpdatedState(onFeedNearBottom)
 
     // Request interception runs on a background thread.
     val blockDirectXState = remember { AtomicBoolean(isBlockDirectXEnabled) }
@@ -590,7 +764,8 @@ fun NitterWebView(
 
         // Re-inject theme when it changes to ensure it's always up to date
         // even without a page reload (e.g. when switching system theme).
-        LaunchedEffect(currentThemeCss, trueBlackCss, darkTheme, frontend, isSiteHeaderEnabled) {
+        LaunchedEffect(currentThemeCss, trueBlackCss, darkTheme, frontend, isSiteHeaderEnabled, javaScriptEnabled) {
+            if (!javaScriptEnabled) return@LaunchedEffect
             webViewRef?.let { wv ->
                 if (UrlPolicy.sameOrigin(latestInstance, wv.url)) {
                     wv.evaluateJavascript(latestJsInjection(wv.url), null)
@@ -598,11 +773,112 @@ fun NitterWebView(
             }
         }
 
-        LaunchedEffect(url) { injectedHtmlCount = 0 }
+        LaunchedEffect(url) {
+            injectedHtmlCount = 0
+            loadedNoJsDocumentKey = null
+            setFeedNavStack(emptyList())
+        }
 
-        LaunchedEffect(feedAppendHtmlChunks.size, webViewRef, url) {
+        val pendingNoJsScrollRef = remember {
+            java.util.concurrent.atomic.AtomicReference<Pair<Int, Int>?>(null)
+        }
+        var appliedLoadGeneration by remember { mutableIntStateOf(0) }
+
+        LaunchedEffect(feedNavDepth, feedShellShowing, webViewRef, feedShellHtml, isFeedView) {
+            val active = isFeedView && !feedShellHtml.isNullOrBlank() && webViewRef != null
+            if (!active) {
+                latestOnFeedBrowseBackReady(null)
+                latestOnFeedBrowseCanGoBackChange(false)
+                return@LaunchedEffect
+            }
+            latestOnFeedBrowseCanGoBackChange(feedNavDepth > 0 || !feedShellShowing)
+            latestOnFeedBrowseBackReady {
+                val view = webViewRef ?: return@latestOnFeedBrowseBackReady false
+                latestPopFeedBrowse(view)
+            }
+        }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                latestOnFeedBrowseBackReady(null)
+                latestOnFeedBrowseCanGoBackChange(false)
+            }
+        }
+
+        // Only when loadGeneration bumps (Retry/Refresh)—not on every in-page URL change.
+        LaunchedEffect(loadGeneration, webViewRef) {
+            if (loadGeneration <= 0 || loadGeneration == appliedLoadGeneration) return@LaunchedEffect
             val view = webViewRef ?: return@LaunchedEffect
-            if (!latestIsFeedView || !UrlPolicy.sameOrigin(latestInstance, view.url)) return@LaunchedEffect
+            val target = url
+            if (target.isEmpty() || !UrlPolicy.sameOrigin(latestInstance, target)) return@LaunchedEffect
+            appliedLoadGeneration = loadGeneration
+            webViewStateBundle.clear()
+            injectedHtmlCount = 0
+            loadedNoJsDocumentKey = null
+            setFeedNavStack(emptyList())
+            pendingNoJsScrollRef.set(null)
+            view.stopLoading()
+            view.clearHistory()
+            if (!remountMergedFeedShell(view)) {
+                view.loadPrivacyUrl(target)
+            }
+        }
+
+        // Apply JS on/off without destroying the WebView (avoids blank/jumpy remounts).
+        var previousJavaScriptEnabled by remember { mutableStateOf<Boolean?>(null) }
+        LaunchedEffect(javaScriptEnabled, webViewRef) {
+            val view = webViewRef ?: return@LaunchedEffect
+            view.settings.javaScriptEnabled = javaScriptEnabled
+            view.settings.domStorageEnabled = javaScriptEnabled
+            val previous = previousJavaScriptEnabled
+            previousJavaScriptEnabled = javaScriptEnabled
+            if (previous == null || previous == javaScriptEnabled) return@LaunchedEffect
+            injectedHtmlCount = 0
+            loadedNoJsDocumentKey = null
+            if (feedNavStackRef.get().isEmpty() && remountMergedFeedShell(view)) return@LaunchedEffect
+            if (url.isNotEmpty() && UrlPolicy.sameOrigin(latestInstance, url)) {
+                view.loadPrivacyUrl(url)
+            }
+        }
+
+        LaunchedEffect(
+            feedShellHtml,
+            feedShellStyleAssets,
+            feedAppendHtmlChunks.size,
+            filterSubscriptions,
+            mutedWords,
+            currentThemeCss,
+            trueBlackCss,
+            isSiteHeaderEnabled,
+            javaScriptEnabled,
+            webViewRef,
+            url,
+            feedNavDepth,
+            feedShellShowing
+        ) {
+            val view = webViewRef ?: return@LaunchedEffect
+            val shell = latestFeedShellHtml
+            // Owned browse stack is showing a remote post/profile — do not remount shell.
+            if (feedNavDepth > 0) return@LaunchedEffect
+            val shellOnScreen = feedShellShowingRef.get()
+            // Feed All with OkHttp shell: render a chrome-free document instead of the
+            // live Nitter page (avoids logo/nav flash). Works for JS and no-JS.
+            if (latestIsFeedView && !shell.isNullOrBlank() && url.isNotBlank()) {
+                instanceOptions.ensureProxyDefaults(url)
+                if (blockDirectXState.get()) instanceOptions.ensureMediaProxyEnabled(url)
+                val key = feedShellKey() ?: return@LaunchedEffect
+                if (loadedNoJsDocumentKey != key || !shellOnScreen) {
+                    // No-JS merges re-render per peer page; keep the reader's place.
+                    if (!javaScriptEnabled && shellOnScreen && loadedNoJsDocumentKey != null) {
+                        pendingNoJsScrollRef.set(view.scrollX to view.scrollY)
+                    }
+                    remountMergedFeedShell(view)
+                    return@LaunchedEffect
+                }
+            }
+            if (!javaScriptEnabled) return@LaunchedEffect
+            if (!latestIsFeedView) return@LaunchedEffect
+            if (!feedShellShowingRef.get()) return@LaunchedEffect
             val pages = latestFeedAppendHtml
             if (pages.size <= injectedHtmlCount) return@LaunchedEffect
             for (index in injectedHtmlCount until pages.size) {
@@ -615,7 +891,8 @@ fun NitterWebView(
             applyFeedFilters(view, view.url)
         }
 
-        LaunchedEffect(filterSubscriptions, mutedWords, webViewRef, url) {
+        LaunchedEffect(filterSubscriptions, mutedWords, webViewRef, url, javaScriptEnabled) {
+            if (!javaScriptEnabled) return@LaunchedEffect
             val view = webViewRef ?: return@LaunchedEffect
             applyFeedFilters(view, view.url)
         }
@@ -626,7 +903,7 @@ fun NitterWebView(
                     Lifecycle.Event.ON_PAUSE -> webViewRef?.onPause()
                     Lifecycle.Event.ON_RESUME -> webViewRef?.let { wv ->
                         wv.onResume()
-                        if (UrlPolicy.sameOrigin(latestInstance, wv.url)) {
+                        if (latestJavaScriptEnabled && UrlPolicy.sameOrigin(latestInstance, wv.url)) {
                             wv.evaluateJavascript(latestJsInjection(wv.url), null)
                         }
                     }
@@ -649,13 +926,27 @@ fun NitterWebView(
             }
         }
 
-        LaunchedEffect(url, selectedInstanceUrl, webViewRef) {
+        LaunchedEffect(url, selectedInstanceUrl, webViewRef, javaScriptEnabled, feedShellHtml) {
             val wv = webViewRef
             if (wv != null && url.isNotEmpty()) {
                 if (!UrlPolicy.sameOrigin(latestInstance, url)) {
                     pageBridge.close()
                     wv.stopLoading()
                     latestOnPageError(-1, "Blocked navigation outside the selected instance")
+                    return@LaunchedEffect
+                }
+                // Feed All with a fetched shell is driven by loadDataWithBaseURL
+                // (chrome-free). Do not also hit the live Nitter URL — but still seed
+                // proxy cookies so subsequent peer OkHttp fetches and media resolve.
+                if (latestIsFeedView && !latestFeedShellHtml.isNullOrBlank()) {
+                    instanceOptions.ensureProxyDefaults(url)
+                    if (blockDirectXState.get()) instanceOptions.ensureMediaProxyEnabled(url)
+                    return@LaunchedEffect
+                }
+                // In-page profile browse keeps Compose [url] at the Feed All root while
+                // the WebView already shows the profile. Syncing would load the live
+                // multi-user page and flash Nitter's top Preferences/search chrome.
+                if (latestIsFeedView && latestIsProfileView) {
                     return@LaunchedEffect
                 }
                 instanceOptions.ensureProxyDefaults(url)
@@ -668,8 +959,16 @@ fun NitterWebView(
                     val normalizedCurrent = currentUrl.trimEnd('/')
                     val normalizedTarget = url.trimEnd('/')
                     if (normalizedCurrent != normalizedTarget) {
-                        // Keep in-WebView status/profile history; Back uses goBack() instead of remounting Feed All.
-                        if (wv.canGoBack() &&
+                        // Skip remount only when Compose is syncing back to a URL already
+                        // in history (Feed All root after in-page browse). New Search/Feed
+                        // destinations must always load—even if the WebView can go back.
+                        val history = wv.copyBackForwardList()
+                        val targetAlreadyVisited = (0 until history.size).any { index ->
+                            history.getItemAtIndex(index)?.url?.trimEnd('/')
+                                .equals(normalizedTarget, ignoreCase = true)
+                        }
+                        if (targetAlreadyVisited &&
+                            wv.canGoBack() &&
                             UrlPolicy.sameOrigin(latestInstance, currentUrl) &&
                             UrlPolicy.sameOrigin(latestInstance, url)
                         ) {
@@ -700,20 +999,26 @@ fun NitterWebView(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    setOnScrollChangeListener { view, _, scrollY, _, _ ->
+                        if (!latestIsFeedView || !feedShellShowingRef.get()) return@setOnScrollChangeListener
+                        val webView = view as WebView
+                        val contentPx = webView.contentHeight * webView.resources.displayMetrics.density
+                        if (contentPx - (scrollY + webView.height) < webView.height * FEED_OLDER_PREFETCH_SCREENS) {
+                            latestOnFeedNearBottom()
+                        }
+                    }
 
                     settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
+                        this.javaScriptEnabled = latestJavaScriptEnabled
+                        domStorageEnabled = latestJavaScriptEnabled
                         cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
                         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
                         allowFileAccess = false
                         allowContentAccess = false
                         setSupportMultipleWindows(false)
                         javaScriptCanOpenWindowsAutomatically = false
-                        val defaultUA = userAgentString
                         userAgentString = UserPreferencesRepository.withAccessKey(
-                            defaultUA.replace("; wv", "")
-                                .replace(Regex("Version/\\d+\\.\\d+\\s+"), ""),
+                            UserPreferencesRepository.browserUserAgent(userAgentString),
                             instanceKey
                         )
                     }
@@ -748,18 +1053,32 @@ fun NitterWebView(
                             pageBridge.close()
                             clickedImageState = null
                             longPressedUrl = null
+                            if (UrlPolicy.isWebViewLocalDocumentUrl(url)) {
+                                feedShellLoadPendingRef.set(false)
+                                url?.let { latestOnPageStarted(it) }
+                                return
+                            }
                             if (!UrlPolicy.sameOrigin(latestInstance, url)) {
                                 view?.stopLoading()
                                 latestOnPageError(-1, "Blocked navigation outside the selected instance")
                                 return
                             }
-                            // Avoid a blank flash when returning to Feed All via history.
-                            val history = view?.copyBackForwardList()
-                            val isHistoryReturn = history != null && history.size > 1 &&
-                                (0 until history.currentIndex).any {
-                                    history.getItemAtIndex(it)?.url == url
-                                }
-                            if (!isHistoryReturn) {
+                            if (feedShellLoadPendingRef.getAndSet(false)) {
+                                url?.let { latestOnPageStarted(it) }
+                                return
+                            }
+                            // A live page replacing the on-screen shell is a link click that
+                            // skipped shouldOverrideUrlLoading; keep it on the owned stack.
+                            val leftShell = setFeedShellShowing(false)
+                            if (leftShell &&
+                                latestIsFeedView &&
+                                !latestFeedShellHtml.isNullOrBlank() &&
+                                url != null &&
+                                feedNavStackRef.get().isEmpty()
+                            ) {
+                                setFeedNavStack(listOf(url))
+                            }
+                            if (feedNavStackRef.get().isEmpty()) {
                                 view?.alpha = 0f
                             }
                             url?.let { latestOnPageStarted(it) }
@@ -767,13 +1086,48 @@ fun NitterWebView(
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            if (view == null || url == null || view.url != url ||
-                                !UrlPolicy.sameOrigin(latestInstance, url)) return
-                            pageBridge.attach(view, url)
+                            if (view == null || url == null) return
+                            if (UrlPolicy.isWebViewLocalDocumentUrl(url) ||
+                                UrlPolicy.isWebViewLocalDocumentUrl(view.url)
+                            ) {
+                                val local = url.takeIf { UrlPolicy.isWebViewLocalDocumentUrl(it) }
+                                    ?: view.url
+                                    ?: url
+                                latestOnPageFinished(local, view)
+                                view.alpha = 1f
+                                return
+                            }
+                            val pageUrl = url.takeIf { UrlPolicy.sameOrigin(latestInstance, it) }
+                                ?: view.url?.takeIf { UrlPolicy.sameOrigin(latestInstance, it) }
+                                ?: return
+                            latestSyncFeedNavTip(pageUrl)
+                            if (!latestJavaScriptEnabled) {
+                                pageBridge.attach(view, pageUrl)
+                                latestOnPageFinished(pageUrl, view)
+                                val mergeScroll = pendingNoJsScrollRef.getAndSet(null)
+                                when {
+                                    mergeScroll != null -> view.post {
+                                        view.scrollTo(mergeScroll.first, mergeScroll.second)
+                                    }
+                                    webViewStateBundle.containsKey("readingY") -> {
+                                        val x = webViewStateBundle.getInt("readingX")
+                                        val y = webViewStateBundle.getInt("readingY")
+                                        webViewStateBundle.remove("readingY")
+                                        view.post { view.scrollTo(x, y) }
+                                    }
+                                }
+                                view.alpha = 1f
+                                return
+                            }
+                            if (view.url != pageUrl || !UrlPolicy.sameOrigin(latestInstance, pageUrl)) {
+                                view.alpha = 1f
+                                return
+                            }
+                            pageBridge.attach(view, pageUrl)
                             view.evaluateJavascript("""
                                 (function() {
                                     // A verification redirect may have replaced the finished document.
-                                    if (window.location.href !== ${org.json.JSONObject.quote(url)}) return null;
+                                    if (window.location.href !== ${org.json.JSONObject.quote(pageUrl)}) return null;
                                     var errors = Array.from(document.querySelectorAll('.error-panel, .error-message, .error'))
                                         .filter(function(element) { return !element.closest('.timeline-item, .main-tweet'); });
                                     if (!document.querySelector('.timeline-item, .main-tweet') && document.body) {
@@ -789,7 +1143,7 @@ fun NitterWebView(
                                     return null;
                                 })()
                             """.trimIndent()) { detected ->
-                                if (view.url != url || !UrlPolicy.sameOrigin(latestInstance, url)) return@evaluateJavascript
+                                if (view.url != pageUrl || !UrlPolicy.sameOrigin(latestInstance, pageUrl)) return@evaluateJavascript
                                 if (detected.startsWith('{')) {
                                     val message = if (detected.length <= 65_536) runCatching {
                                         org.json.JSONObject(detected).optString("instanceUnavailable").takeIf { it.isNotBlank() }
@@ -799,14 +1153,14 @@ fun NitterWebView(
                                     return@evaluateJavascript
                                 }
                                 when (detected) {
-                                    "\"TEAPOT\"" -> latestOnFrontendDetected(url, FrontendType.TEAPOT)
-                                    "\"NITTER\"" -> latestOnFrontendDetected(url, FrontendType.NITTER)
+                                    "\"TEAPOT\"" -> latestOnFrontendDetected(pageUrl, FrontendType.TEAPOT)
+                                    "\"NITTER\"" -> latestOnFrontendDetected(pageUrl, FrontendType.NITTER)
                                 }
-                                latestOnPageFinished(url, view)
+                                latestOnPageFinished(pageUrl, view)
                                 // Read the main document directly; no avatar interface is exposed to frames.
                                 view.evaluateJavascript("""
                                     (function() {
-                                        if (location.href !== ${org.json.JSONObject.quote(url)}) return null;
+                                        if (location.href !== ${org.json.JSONObject.quote(pageUrl)}) return null;
                                         var avatar = document.querySelector('a.profile-card-avatar');
                                         if (avatar) return avatar.href;
                                         var image = document.querySelector('.main-tweet .tweet-avatar img, .tweet-avatar img');
@@ -815,20 +1169,20 @@ fun NitterWebView(
                                         return location.pathname.indexOf('/status/') === -1 && meta ? meta.content : null;
                                     })()
                                 """.trimIndent()) avatarResult@{ result ->
-                                    if (view.url != url || !UrlPolicy.sameOrigin(latestInstance, url) ||
+                                    if (view.url != pageUrl || !UrlPolicy.sameOrigin(latestInstance, pageUrl) ||
                                         result.length > 65_536 || !result.startsWith('"')) return@avatarResult
                                     val value = runCatching { org.json.JSONTokener(result).nextValue() as? String }.getOrNull()
                                     val avatar = UrlPolicy.mediaUrl(value, blockDirectXState.get()) ?: return@avatarResult
-                                    latestOnAvatarFound(url, avatar)
+                                    latestOnAvatarFound(pageUrl, avatar)
                                 }
                             }
-                            view.evaluateJavascript(latestJsInjection(url)) {
-                                if (view.url != url || !UrlPolicy.sameOrigin(latestInstance, url)) return@evaluateJavascript
+                            view.evaluateJavascript(latestJsInjection(pageUrl)) {
+                                if (view.url != pageUrl || !UrlPolicy.sameOrigin(latestInstance, pageUrl)) return@evaluateJavascript
                                 view.evaluateJavascript(positionScript, null)
-                                applyFeedFilters(view, url)
+                                applyFeedFilters(view, pageUrl)
                                 val append = latestFeedAppendBatches
                                 if (latestIsFeedView && append.isNotEmpty() &&
-                                    url.trimEnd('/') == (view.url ?: "").trimEnd('/')
+                                    pageUrl.trimEnd('/') == (view.url ?: "").trimEnd('/')
                                 ) {
                                     view.evaluateJavascript(FeedBatchAppend.script(append), null)
                                 }
@@ -859,6 +1213,7 @@ fun NitterWebView(
                         ) {
                             super.onReceivedError(view, request, error)
                             if (request?.isForMainFrame == true) {
+                                view?.alpha = 1f
                                 latestOnPageError(
                                     error?.errorCode ?: 0,
                                     error?.description.toString()
@@ -894,12 +1249,17 @@ fun NitterWebView(
                             view: WebView?,
                             request: WebResourceRequest?
                         ): WebResourceResponse? {
+                            val requestUrl = request?.url?.toString()
+                            // loadDataWithBaseURL may surface as data:/about: main-frame;
+                            // sameOrigin rejects those and a 403 becomes ERR_HTTP_RESPONSE_CODE_FAILURE.
+                            if (UrlPolicy.isWebViewLocalDocumentUrl(requestUrl)) {
+                                return super.shouldInterceptRequest(view, request)
+                            }
                             if (request?.isForMainFrame == true &&
-                                !UrlPolicy.sameOrigin(selectedInstanceState.get(), request.url.toString())) {
+                                !UrlPolicy.sameOrigin(selectedInstanceState.get(), requestUrl)) {
                                 return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked",
                                     mapOf("Cache-Control" to "no-store"), java.io.ByteArrayInputStream(ByteArray(0)))
                             }
-                            val requestUrl = request?.url?.toString()
                             if (blockDirectXState.get()) {
                                 val requestHost = request?.url?.host?.lowercase()
                                 if (requestHost != null && UrlPolicy.isXHost(requestHost)) {
@@ -939,9 +1299,22 @@ fun NitterWebView(
                             request: WebResourceRequest?
                         ): Boolean {
                             val requestUrl = request?.url ?: return true
-                            val target = UrlPolicy.httpsUrl(requestUrl.toString()) ?: return true
+                            // instanceUrl allows http://…onion (httpsUrl alone blocks Tor media/nav).
+                            val target = UrlPolicy.instanceUrl(requestUrl.toString()) ?: return true
                             if (blockDirectXState.get() && UrlPolicy.isXHost(target.host)) return true
-                            if (UrlPolicy.sameOrigin(latestInstance, target.toString())) {
+                            val dest = target.toString()
+                            if (UrlPolicy.sameOrigin(latestInstance, dest)) {
+                                // Feed All: own same-origin main-frame clicks so back can
+                                // remount the retained shell instead of relying on history.
+                                if (latestIsFeedView &&
+                                    !latestFeedShellHtml.isNullOrBlank() &&
+                                    request.isForMainFrame &&
+                                    !request.isRedirect &&
+                                    view != null
+                                ) {
+                                    latestPushFeedBrowse(view, dest)
+                                    return true
+                                }
                                 return false
                             }
                             if (request.isForMainFrame && request.hasGesture()) {
@@ -990,11 +1363,22 @@ fun NitterWebView(
                 }
                 // A nonempty bundle can contain scroll coordinates without valid
                 // browser history (for example if the page was still starting).
-                val restored = webView.restoreState(webViewStateBundle)
+                // Skip restore after Refresh/Retry so a failed page isn't remounted.
+                if (loadGeneration > 0) {
+                    webViewStateBundle.clear()
+                }
+                // The shell effect mounts Feed All from memory; a restored or live page
+                // load here would race it and leave the feed blank until Back.
+                val feedShellAvailable = isFeedView && !feedShellHtml.isNullOrBlank()
+                val restored = if (loadGeneration > 0 || feedShellAvailable) {
+                    null
+                } else {
+                    webView.restoreState(webViewStateBundle)
+                }
                 val safeHistory = restored != null && (0 until restored.size).all {
                     UrlPolicy.sameOrigin(latestInstance, restored.getItemAtIndex(it).url)
                 }
-                if (!safeHistory) {
+                if (!safeHistory && !feedShellAvailable) {
                     webView.stopLoading()
                     webView.clearHistory()
                     if (restored != null) webViewStateBundle.clear()
@@ -1024,6 +1408,8 @@ fun NitterWebView(
                 }
 
                 if (webView != null) {
+                    webView.settings.javaScriptEnabled = javaScriptEnabled
+                    webView.settings.domStorageEnabled = javaScriptEnabled
                     val cookieManager = CookieManager.getInstance()
                     cookieManager.setAcceptCookie(true)
                     try {

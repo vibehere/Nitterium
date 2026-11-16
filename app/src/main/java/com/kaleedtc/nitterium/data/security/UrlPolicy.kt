@@ -61,13 +61,13 @@ object UrlPolicy {
         }
     }
 
-    enum class InstanceGroup { TorFriendly, Public, Onion, Custom }
+    /** UI sections for instance pickers (clearnet Tor-capable hosts stay under Public). */
+    enum class InstanceGroup { Public, Onion, Custom }
 
     fun instanceGroup(
         url: String,
         builtIn: Collection<String>,
         custom: Collection<String>,
-        torFriendly: Collection<String>,
     ): InstanceGroup {
         val host = instanceUrl(url)?.host.orEmpty()
         if (isOnionHost(host)) return InstanceGroup.Onion
@@ -75,7 +75,6 @@ object UrlPolicy {
         val isCustom = custom.any { instanceUrl(it)?.toString()?.trimEnd('/') == normalized } &&
             builtIn.none { instanceUrl(it)?.toString()?.trimEnd('/') == normalized }
         if (isCustom) return InstanceGroup.Custom
-        if (isTorFriendlyInstance(url, torFriendly)) return InstanceGroup.TorFriendly
         return InstanceGroup.Public
     }
 
@@ -83,11 +82,10 @@ object UrlPolicy {
         builtIn: List<String>,
         custom: Collection<String>,
         selected: String,
-        torFriendly: Collection<String>,
     ): List<Pair<InstanceGroup, List<String>>> {
         val choices = instanceChoices(builtIn, custom.toSet(), selected)
         return InstanceGroup.entries.mapNotNull { group ->
-            val items = choices.filter { instanceGroup(it, builtIn, custom, torFriendly) == group }
+            val items = choices.filter { instanceGroup(it, builtIn, custom) == group }
             items.takeIf { it.isNotEmpty() }?.let { group to it }
         }
     }
@@ -97,6 +95,18 @@ object UrlPolicy {
         val b = instanceUrl(page) ?: return false
         return a.host.equals(b.host, ignoreCase = true) && a.port == b.port &&
             a.scheme.equals(b.scheme, ignoreCase = true)
+    }
+
+    /**
+     * Schemes WebView uses for in-memory documents ([WebView.loadDataWithBaseURL] /
+     * about:blank). These are not remote origins and must not be blocked by
+     * same-origin interceptors (blocking them yields ERR_HTTP_RESPONSE_CODE_FAILURE).
+     */
+    fun isWebViewLocalDocumentUrl(value: String?): Boolean {
+        if (value.isNullOrBlank()) return false
+        val scheme = runCatching { URI(value).scheme }.getOrNull()?.lowercase(Locale.ROOT)
+            ?: return false
+        return scheme == "data" || scheme == "about" || scheme == "blob"
     }
 
     fun origin(url: String): String? = instanceUrl(url)?.newBuilder()
@@ -109,7 +119,11 @@ object UrlPolicy {
         }
     }
 
-    fun mediaUrl(value: String?, blockDirectX: Boolean): String? = httpsUrl(value)
+    /**
+     * Accepts HTTPS media, or HTTP media on `.onion` (Tor). Clearnet HTTP is rejected.
+     * Same rules as [instanceUrl] so Feed All / Coil can load onion `/pic/` assets.
+     */
+    fun mediaUrl(value: String?, blockDirectX: Boolean): String? = instanceUrl(value)
         ?.takeUnless { blockDirectX && isXHost(it.host) }?.toString()
 
     fun instanceChoices(builtIn: List<String>, custom: Set<String>, selected: String): List<String> =

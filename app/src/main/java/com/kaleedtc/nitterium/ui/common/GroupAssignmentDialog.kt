@@ -11,16 +11,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,6 +56,11 @@ fun GroupAssignmentDialog(
         mutableStateOf(triStateKey(subscription.hideReplies))
     }
     var mutedInFeed by rememberSaveable(subscription.username) { mutableStateOf(subscription.mutedInFeed) }
+    var groupQuery by rememberSaveable(subscription.username) { mutableStateOf("") }
+    val visibleGroups = remember(allGroups, groupQuery) {
+        val q = groupQuery.trim()
+        if (q.isEmpty()) allGroups else allGroups.filter { it.name.contains(q, ignoreCase = true) }
+    }
 
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
@@ -116,31 +128,56 @@ fun GroupAssignmentDialog(
                 if (allGroups.isEmpty()) {
                     item { Text(stringResource(R.string.no_groups_created)) }
                 } else {
-                    items(allGroups) { group ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .toggleable(
-                                    value = selectedGroupIds.contains(group.id),
-                                    enabled = !isSaving,
-                                    role = Role.Checkbox,
-                                    onValueChange = {
-                                        selectedGroupIds = if (selectedGroupIds.contains(group.id)) {
-                                            selectedGroupIds - group.id
-                                        } else {
-                                            selectedGroupIds + group.id
-                                        }
+                    item {
+                        OutlinedTextField(
+                            value = groupQuery,
+                            onValueChange = { groupQuery = it },
+                            label = { Text(stringResource(R.string.search_groups)) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = {
+                                if (groupQuery.isNotEmpty()) {
+                                    IconButton(onClick = { groupQuery = "" }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = stringResource(R.string.clear_search)
+                                        )
                                     }
+                                }
+                            },
+                            singleLine = true,
+                            enabled = !isSaving,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (visibleGroups.isEmpty()) {
+                        item { Text(stringResource(R.string.no_matching_group_members)) }
+                    } else {
+                        items(visibleGroups, key = { it.id }) { group ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .toggleable(
+                                        value = selectedGroupIds.contains(group.id),
+                                        enabled = !isSaving,
+                                        role = Role.Checkbox,
+                                        onValueChange = {
+                                            selectedGroupIds = if (selectedGroupIds.contains(group.id)) {
+                                                selectedGroupIds - group.id
+                                            } else {
+                                                selectedGroupIds + group.id
+                                            }
+                                        }
+                                    )
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = selectedGroupIds.contains(group.id),
+                                    onCheckedChange = null
                                 )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = selectedGroupIds.contains(group.id),
-                                onCheckedChange = null
-                            )
-                            Spacer(modifier = Modifier.size(8.dp))
-                            Text(group.name)
+                                Spacer(modifier = Modifier.size(8.dp))
+                                Text(group.name)
+                            }
                         }
                     }
                 }

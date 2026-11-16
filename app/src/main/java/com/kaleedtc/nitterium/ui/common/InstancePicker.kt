@@ -1,5 +1,6 @@
 package com.kaleedtc.nitterium.ui.common
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,6 +14,8 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.AssistChip
@@ -26,7 +29,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,9 +58,23 @@ fun InstancePicker(preferences: UserPreferencesRepository, onDismiss: () -> Unit
     val selected by preferences.instanceUrl.collectAsStateWithLifecycle(initialValue = "")
     val custom by preferences.customInstances.collectAsStateWithLifecycle(initialValue = emptySet())
     val builtIn = stringArrayResource(R.array.default_instance_urls).toList()
-    val torFriendly = stringArrayResource(R.array.tor_friendly_instance_urls).toList()
-    val groups = remember(builtIn, custom, selected, torFriendly) {
-        UrlPolicy.groupedInstanceChoices(builtIn, custom, selected, torFriendly)
+    val groups = remember(builtIn, custom, selected) {
+        UrlPolicy.groupedInstanceChoices(builtIn, custom, selected)
+    }
+    val expanded = remember { mutableStateMapOf<UrlPolicy.InstanceGroup, Boolean>() }
+    LaunchedEffect(groups, selected) {
+        groups.forEach { (group, instances) ->
+            if (group !in expanded) {
+                val hasSelected = instances.any {
+                    it.trimEnd('/') == selected.trimEnd('/')
+                }
+                expanded[group] = when (group) {
+                    UrlPolicy.InstanceGroup.Public -> true
+                    UrlPolicy.InstanceGroup.Custom -> true
+                    UrlPolicy.InstanceGroup.Onion -> hasSelected
+                }
+            }
+        }
     }
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
@@ -93,37 +112,67 @@ fun InstancePicker(preferences: UserPreferencesRepository, onDismiss: () -> Unit
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 groups.forEach { (group, instances) ->
+                    val isExpanded = expanded[group] != false
                     item(key = "header_${group.name}") {
-                        Text(
-                            text = stringResource(groupTitle(group)),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp)
-                        )
+                        val title = stringResource(groupTitle(group))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable(role = Role.Button) {
+                                    expanded[group] = !isExpanded
+                                }
+                                .padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "$title (${instances.size})",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                imageVector = if (isExpanded) {
+                                    Icons.Filled.ExpandLess
+                                } else {
+                                    Icons.Filled.ExpandMore
+                                },
+                                contentDescription = stringResource(
+                                    if (isExpanded) {
+                                        R.string.instance_group_collapse
+                                    } else {
+                                        R.string.instance_group_expand
+                                    },
+                                    title
+                                ),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
-                    items(instances, key = { it }) { instance ->
-                        val isSelected = instance.trimEnd('/') == selected.trimEnd('/')
-                        InstanceChoiceRow(
-                            host = UrlPolicy.displayHost(instance),
-                            url = instance,
-                            group = group,
-                            selected = isSelected,
-                            enabled = !saving && !isSelected,
-                            onClick = {
-                                saving = true
-                                failed = false
-                                scope.launch {
-                                    try {
-                                        preferences.setInstanceUrl(instance)
-                                        onDismiss()
-                                    } catch (_: IOException) {
-                                        failed = true
-                                    } finally {
-                                        saving = false
+                    if (isExpanded) {
+                        items(instances, key = { it }) { instance ->
+                            val isSelected = instance.trimEnd('/') == selected.trimEnd('/')
+                            InstanceChoiceRow(
+                                host = UrlPolicy.displayHost(instance),
+                                url = instance,
+                                group = group,
+                                selected = isSelected,
+                                enabled = !saving && !isSelected,
+                                onClick = {
+                                    saving = true
+                                    failed = false
+                                    scope.launch {
+                                        try {
+                                            preferences.setInstanceUrl(instance)
+                                            onDismiss()
+                                        } catch (_: IOException) {
+                                            failed = true
+                                        } finally {
+                                            saving = false
+                                        }
                                     }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
@@ -158,11 +207,10 @@ private fun InstanceChoiceRow(
 ) {
     val badge = when (group) {
         UrlPolicy.InstanceGroup.Onion -> stringResource(R.string.instance_tor_label)
-        UrlPolicy.InstanceGroup.TorFriendly -> stringResource(R.string.instance_tor_friendly_label)
         UrlPolicy.InstanceGroup.Public, UrlPolicy.InstanceGroup.Custom -> null
     }
     val icon: ImageVector = when (group) {
-        UrlPolicy.InstanceGroup.Onion, UrlPolicy.InstanceGroup.TorFriendly -> Icons.Outlined.Shield
+        UrlPolicy.InstanceGroup.Onion -> Icons.Outlined.Shield
         UrlPolicy.InstanceGroup.Public, UrlPolicy.InstanceGroup.Custom -> Icons.Filled.Public
     }
     Surface(
@@ -241,7 +289,6 @@ private fun InstanceChoiceRow(
 }
 
 private fun groupTitle(group: UrlPolicy.InstanceGroup): Int = when (group) {
-    UrlPolicy.InstanceGroup.TorFriendly -> R.string.instance_group_tor_friendly
     UrlPolicy.InstanceGroup.Public -> R.string.instance_group_public
     UrlPolicy.InstanceGroup.Onion -> R.string.instance_group_onion
     UrlPolicy.InstanceGroup.Custom -> R.string.instance_group_custom

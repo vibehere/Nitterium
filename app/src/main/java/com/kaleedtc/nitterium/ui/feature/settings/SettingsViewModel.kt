@@ -6,12 +6,17 @@ import com.kaleedtc.nitterium.data.frontend.InstanceSettingsCookies
 import com.kaleedtc.nitterium.data.repository.CookieInstanceOptionsStore
 import androidx.lifecycle.viewModelScope
 import com.kaleedtc.nitterium.R
+import com.kaleedtc.nitterium.data.model.InstanceDirectoryEntry
 import com.kaleedtc.nitterium.data.model.NitterInstanceSettings
 import com.kaleedtc.nitterium.data.model.ReleaseNotesPreferences
 import com.kaleedtc.nitterium.data.model.SocksProxySettings
 import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
 import com.kaleedtc.nitterium.data.repository.BackupRepository
+import com.kaleedtc.nitterium.data.security.InstanceHealthProbe
+import com.kaleedtc.nitterium.data.security.PublicInstanceDirectory
+import com.kaleedtc.nitterium.data.security.TorOnionPreference
 import com.kaleedtc.nitterium.ui.common.MviViewModel
+import com.kaleedtc.nitterium.NitteriumApplication
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -54,7 +59,9 @@ class SettingsViewModel(
                 preferencesRepository.instanceKeys,
                 preferencesRepository.feedUsersPerBatch,
                 preferencesRepository.feedSpreadAcrossInstances,
-                preferencesRepository.mutedWords
+                preferencesRepository.feedPreferRss,
+                preferencesRepository.mutedWords,
+                preferencesRepository.discoveredInstances
             ) { args ->
                 val url = args[0] as String
                 val dynamic = args[1] as Boolean
@@ -68,9 +75,12 @@ class SettingsViewModel(
                 val customInstances = (args[8] as Set<String>).toList()
                 val instanceSettings = args[9] as NitterInstanceSettings
 
-                val allInstances = availableInstances + customInstances
                 @Suppress("UNCHECKED_CAST")
                 val instanceKeys = args[14] as Map<String, String>
+                @Suppress("UNCHECKED_CAST")
+                val discovered = (args[19] as Set<String>).toList()
+                val allInstances = (availableInstances + discovered + customInstances)
+                    .distinctBy { it.trimEnd('/').lowercase() }
 
                 SettingsState(
                     frontendMode = args[10] as FrontendType,
@@ -86,6 +96,7 @@ class SettingsViewModel(
                     isDarkTheme = dark,
                     availableInstances = allInstances,
                     customInstances = customInstances,
+                    discoveredInstances = discovered,
                     instanceSettings = instanceSettings,
                     appVersion = _appVersion,
                     showReleaseNotesAfterUpdates = (args[12] as ReleaseNotesPreferences).enabled,
@@ -93,10 +104,59 @@ class SettingsViewModel(
                     instanceKey = instanceKeys[UserPreferencesRepository.hostOf(url)].orEmpty(),
                     feedUsersPerBatch = args[15] as Int,
                     feedSpreadAcrossInstances = args[16] as Boolean,
-                    mutedWords = @Suppress("UNCHECKED_CAST") (args[17] as List<String>)
+                    feedPreferRss = args[17] as Boolean,
+                    mutedWords = @Suppress("UNCHECKED_CAST") (args[18] as List<String>)
                 )
             }.collect { newState ->
-                setState { newState.copy(isBackupBusy = isBackupBusy, backupToRestore = backupToRestore) }
+                setState {
+                    // Preserve fields owned by separate collectors—this combine used to
+                    // reset onion-only / no-JS / disabled-instance toggles on every emit.
+                    newState.copy(
+                        isBackupBusy = isBackupBusy,
+                        isScanningInstances = isScanningInstances,
+                        isProbingInstances = isProbingInstances,
+                        instanceProbeChecked = instanceProbeChecked,
+                        instanceProbeTotal = instanceProbeTotal,
+                        backupToRestore = backupToRestore,
+                        socksPreferOnionInstances = socksPreferOnionInstances,
+                        disableWebJavascript = disableWebJavascript,
+                        disabledInstanceUrls = disabledInstanceUrls,
+                        instanceCatalog = instanceCatalog,
+                        instancePoolPresets = instancePoolPresets,
+                        activeInstancePoolPresetId = activeInstancePoolPresetId
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.socksPreferOnionInstances.collect { prefer ->
+                setState { copy(socksPreferOnionInstances = prefer) }
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.disableWebJavascript.collect { disabled ->
+                setState { copy(disableWebJavascript = disabled) }
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.disabledInstanceUrls.collect { urls ->
+                setState { copy(disabledInstanceUrls = urls) }
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.discoveredInstanceCatalog.collect { catalog ->
+                setState { copy(instanceCatalog = catalog) }
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.instancePoolPresets.collect { presets ->
+                setState { copy(instancePoolPresets = presets) }
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.activeInstancePoolPresetId.collect { id ->
+                setState { copy(activeInstancePoolPresetId = id) }
             }
         }
 
@@ -110,6 +170,40 @@ class SettingsViewModel(
     private fun loadSettingsFromCookies(url: String, frontend: FrontendType) {
         instanceOptions.ensureDefaults(url, frontend)
         _instanceSettings.value = instanceOptions.read(url, frontend)
+    }
+
+    private fun isOnionOnlyActive(): Boolean {
+        val s = state.value
+        return s.socksProxy.enabled && s.socksPreferOnionInstances
+    }
+
+    private suspend fun applyOnionInstancePreference(socksEnabled: Boolean, preferOnion: Boolean) {
+        val onionOnly = socksEnabled && preferOnion
+        val current = preferencesRepository.instanceUrl.first()
+        if (onionOnly) {
+            if (TorOnionPreference.isOnionInstance(current)) return
+            val candidates = availableInstances +
+                preferencesRepository.customInstances.first() +
+                preferencesRepository.discoveredInstances.first()
+            val onion = TorOnionPreference.firstOnion(candidates) ?: return
+            val backup = preferencesRepository.instanceUrlBeforeOnion.first()
+            if (backup.isNullOrBlank()) {
+                preferencesRepository.setInstanceUrlBeforeOnion(current)
+            }
+            preferencesRepository.setInstanceUrl(onion)
+            setEffect {
+                SettingsEffect.ShowSnackbar(application.getString(R.string.socks_switched_to_onion))
+            }
+            return
+        }
+        val backup = preferencesRepository.instanceUrlBeforeOnion.first() ?: return
+        if (TorOnionPreference.isOnionInstance(current)) {
+            preferencesRepository.setInstanceUrl(backup)
+            setEffect {
+                SettingsEffect.ShowSnackbar(application.getString(R.string.socks_restored_clearnet))
+            }
+        }
+        preferencesRepository.setInstanceUrlBeforeOnion(null)
     }
 
     override fun onEvent(event: SettingsEvent) {
@@ -152,6 +246,12 @@ class SettingsViewModel(
                     setEffect { SettingsEffect.ShowSnackbar(application.getString(R.string.instance_url_invalid)) }
                     return
                 }
+                if (isOnionOnlyActive() && !TorOnionPreference.isOnionInstance(event.url)) {
+                    setEffect {
+                        SettingsEffect.ShowSnackbar(application.getString(R.string.socks_onion_only_required))
+                    }
+                    return
+                }
                 viewModelScope.launch {
                     preferencesRepository.setInstanceUrl(event.url)
                 }
@@ -163,7 +263,12 @@ class SettingsViewModel(
                 }
                 viewModelScope.launch {
                     preferencesRepository.addCustomInstance(event.url)
-                    // Optionally set it as current
+                    if (isOnionOnlyActive() && !TorOnionPreference.isOnionInstance(event.url)) {
+                        setEffect {
+                            SettingsEffect.ShowSnackbar(application.getString(R.string.socks_onion_only_required))
+                        }
+                        return@launch
+                    }
                     preferencesRepository.setInstanceUrl(event.url)
                 }
             }
@@ -172,7 +277,23 @@ class SettingsViewModel(
                     preferencesRepository.removeCustomInstance(event.url)
                     // If the current URL is removed, fall back to the default instance.
                     if (state.value.instanceUrl == event.url) {
-                        preferencesRepository.setInstanceUrl("https://xitter.cf")
+                        val fallback = if (isOnionOnlyActive()) {
+                            TorOnionPreference.firstOnion(
+                                availableInstances +
+                                    preferencesRepository.customInstances.first() +
+                                    preferencesRepository.discoveredInstances.first()
+                            ) ?: run {
+                                setEffect {
+                                    SettingsEffect.ShowSnackbar(
+                                        application.getString(R.string.socks_onion_unavailable)
+                                    )
+                                }
+                                return@launch
+                            }
+                        } else {
+                            "https://shitter.thepixora.com"
+                        }
+                        preferencesRepository.setInstanceUrl(fallback)
                     }
                 }
             }
@@ -218,6 +339,17 @@ class SettingsViewModel(
                     }
                 }
             }
+            is SettingsEvent.UpdateDisableWebJavascript -> {
+                setState { copy(disableWebJavascript = event.enabled) }
+                viewModelScope.launch {
+                    preferencesRepository.setDisableWebJavascript(event.enabled)
+                }
+            }
+            is SettingsEvent.SetInstanceDisabled -> {
+                viewModelScope.launch {
+                    preferencesRepository.setInstanceDisabled(event.url, event.disabled)
+                }
+            }
             is SettingsEvent.UpdateDarkTheme -> {
                 viewModelScope.launch {
                     preferencesRepository.setDarkTheme(event.isDark)
@@ -235,8 +367,26 @@ class SettingsViewModel(
                     }
                     return
                 }
+                val wasEnabled = state.value.socksProxy.enabled
                 viewModelScope.launch {
                     preferencesRepository.setSocksProxy(event.settings)
+                    // Only switch instances when Tor itself is toggled—not on host/port saves.
+                    if (wasEnabled != event.settings.enabled) {
+                        applyOnionInstancePreference(
+                            socksEnabled = event.settings.enabled,
+                            preferOnion = preferencesRepository.socksPreferOnionInstances.first()
+                        )
+                    }
+                }
+            }
+            is SettingsEvent.UpdateSocksPreferOnion -> {
+                setState { copy(socksPreferOnionInstances = event.enabled) }
+                viewModelScope.launch {
+                    preferencesRepository.setSocksPreferOnionInstances(event.enabled)
+                    applyOnionInstancePreference(
+                        socksEnabled = preferencesRepository.socksProxy.first().enabled,
+                        preferOnion = event.enabled
+                    )
                 }
             }
             is SettingsEvent.UpdateInstanceKey -> {
@@ -275,6 +425,11 @@ class SettingsViewModel(
                     preferencesRepository.setFeedSpreadAcrossInstances(event.enabled)
                 }
             }
+            is SettingsEvent.UpdateFeedPreferRss -> {
+                viewModelScope.launch {
+                    preferencesRepository.setFeedPreferRss(event.enabled)
+                }
+            }
             is SettingsEvent.AddMutedWord -> {
                 viewModelScope.launch {
                     preferencesRepository.addMutedWord(event.word)
@@ -283,6 +438,171 @@ class SettingsViewModel(
             is SettingsEvent.RemoveMutedWord -> {
                 viewModelScope.launch {
                     preferencesRepository.removeMutedWord(event.word)
+                }
+            }
+            SettingsEvent.ScanPublicInstances -> {
+                if (state.value.isScanningInstances) return
+                setState { copy(isScanningInstances = true) }
+                viewModelScope.launch {
+                    val onionOnly = isOnionOnlyActive()
+                    val socksOn = preferencesRepository.socksProxy.first().enabled
+                    val preferOnion = preferencesRepository.socksPreferOnionInstances.first()
+                    // Keep onions when SOCKS is on or onion-only is preferred (Tor VPN path).
+                    val result = runCatching {
+                        PublicInstanceDirectory.scanHealthy(
+                            includeOnion = socksOn || preferOnion || onionOnly
+                        )
+                    }.getOrNull()
+                    if (result == null || result.sourcesOk == 0) {
+                        setState { copy(isScanningInstances = false) }
+                        setEffect {
+                            SettingsEffect.ShowSnackbar(
+                                application.getString(
+                                    if (onionOnly) R.string.instance_scan_failed_tor
+                                    else R.string.instance_scan_failed
+                                )
+                            )
+                        }
+                        return@launch
+                    }
+                    val previous = preferencesRepository.discoveredInstanceCatalog.first()
+                        .associateBy { it.normalizedUrl().lowercase() }
+                    val merged = result.entries.map { entry ->
+                        val old = previous[entry.normalizedUrl().lowercase()]
+                        if (old == null) entry else entry.copy(
+                            worksHtml = old.worksHtml,
+                            worksRss = old.worksRss,
+                            worksWithoutJs = old.worksWithoutJs,
+                            ddosProtection = old.ddosProtection ?: entry.ddosProtection,
+                            lastProbedEpochMs = old.lastProbedEpochMs
+                        )
+                    }
+                    preferencesRepository.setDiscoveredInstanceCatalog(merged)
+                    setState { copy(isScanningInstances = false) }
+                    setEffect {
+                        SettingsEffect.ShowSnackbar(
+                            application.getString(
+                                if (onionOnly) R.string.instance_scan_onion_note
+                                else R.string.instance_scan_found,
+                                result.healthy.size
+                            )
+                        )
+                    }
+                }
+            }
+            SettingsEvent.ProbeInstanceAvailability -> {
+                if (state.value.isProbingInstances) return
+                viewModelScope.launch {
+                    val catalog = preferencesRepository.discoveredInstanceCatalog.first()
+                    val custom = preferencesRepository.customInstances.first()
+                    val builtIn = availableInstances
+                    val seeds = (catalog.map { it.normalizedUrl() } + custom + builtIn)
+                        .map { it.trim().trimEnd('/') }
+                        .filter { it.isNotBlank() }
+                        .distinctBy { it.lowercase() }
+                    if (seeds.isEmpty()) {
+                        setEffect {
+                            SettingsEffect.ShowSnackbar(
+                                application.getString(R.string.instance_probe_empty)
+                            )
+                        }
+                        return@launch
+                    }
+                    val byUrl = catalog.associateBy { it.normalizedUrl().lowercase() }.toMutableMap()
+                    val toProbe = seeds.map { url ->
+                        byUrl[url.lowercase()] ?: InstanceDirectoryEntry(url = url)
+                    }
+                    setState {
+                        copy(
+                            isProbingInstances = true,
+                            instanceProbeChecked = 0,
+                            instanceProbeTotal = toProbe.size
+                        )
+                    }
+                    val probed = runCatching {
+                        InstanceHealthProbe.probeAll(toProbe) { progress ->
+                            setState {
+                                copy(
+                                    instanceProbeChecked = progress.checked,
+                                    instanceProbeTotal = progress.total
+                                )
+                            }
+                        }
+                    }.getOrElse {
+                        setState {
+                            copy(
+                                isProbingInstances = false,
+                                instanceProbeChecked = 0,
+                                instanceProbeTotal = 0
+                            )
+                        }
+                        setEffect {
+                            SettingsEffect.ShowSnackbar(
+                                application.getString(R.string.instance_probe_failed)
+                            )
+                        }
+                        return@launch
+                    }
+                    preferencesRepository.setDiscoveredInstanceCatalog(probed)
+                    val broken = probed.count { it.worksHtml == false }
+                    val working = probed.count { it.worksHtml == true }
+                    for (entry in probed) {
+                        when (entry.worksHtml) {
+                            false -> preferencesRepository.setInstanceDisabled(
+                                entry.normalizedUrl(),
+                                true
+                            )
+                            true -> preferencesRepository.setInstanceDisabled(
+                                entry.normalizedUrl(),
+                                false
+                            )
+                            null -> Unit
+                        }
+                    }
+                    setState {
+                        copy(
+                            isProbingInstances = false,
+                            instanceProbeChecked = probed.size,
+                            instanceProbeTotal = probed.size
+                        )
+                    }
+                    setEffect {
+                        SettingsEffect.ShowSnackbar(
+                            application.getString(
+                                R.string.instance_probe_done,
+                                probed.size,
+                                working,
+                                broken
+                            )
+                        )
+                    }
+                }
+            }
+            is SettingsEvent.SaveInstancePoolPreset -> {
+                viewModelScope.launch {
+                    preferencesRepository.upsertInstancePoolPreset(
+                        name = event.name,
+                        urls = event.urls,
+                        id = event.id
+                    )
+                }
+            }
+            is SettingsEvent.RemoveInstancePoolPreset -> {
+                viewModelScope.launch {
+                    preferencesRepository.removeInstancePoolPreset(event.id)
+                }
+            }
+            is SettingsEvent.SetActiveInstancePoolPreset -> {
+                viewModelScope.launch {
+                    preferencesRepository.setActiveInstancePoolPresetId(event.id)
+                }
+            }
+            SettingsEvent.ClearFeedCache -> {
+                (application as? NitteriumApplication)?.feedTimelineCache?.evictAll()
+                setEffect {
+                    SettingsEffect.ShowSnackbar(
+                        application.getString(R.string.feed_cache_cleared)
+                    )
                 }
             }
         }

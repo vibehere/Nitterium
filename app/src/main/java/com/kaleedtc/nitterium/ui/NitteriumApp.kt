@@ -360,8 +360,12 @@ fun NitteriumApp(
                             app.subscriptionRepository,
                             app.connectivityMonitor,
                             app.feedGroupRepository,
+                            feedTimelineCache = app.feedTimelineCache,
                             knownInstances = app.resources.getStringArray(
                                 com.kaleedtc.nitterium.R.array.default_instance_urls
+                            ).toList(),
+                            torFriendlyInstances = app.resources.getStringArray(
+                                com.kaleedtc.nitterium.R.array.tor_friendly_instance_urls
                             ).toList(),
                             defaultUserAgent = FeedViewModel.defaultUserAgent(app)
                         ).apply {

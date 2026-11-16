@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.exclude
@@ -22,20 +23,25 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,10 +51,12 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kaleedtc.nitterium.R
 import com.kaleedtc.nitterium.data.security.UrlPolicy
+import com.kaleedtc.nitterium.ui.common.BotChallengeDialog
 import com.kaleedtc.nitterium.ui.common.ErrorScreen
 import com.kaleedtc.nitterium.ui.common.GroupAssignmentDialog
 import com.kaleedtc.nitterium.ui.common.GroupAssignmentMenu
@@ -103,6 +111,8 @@ fun FeedContent(
     onNavigateToGroups: () -> Unit = onNavigateBack
 ) {
     var webView: WebView? by remember { mutableStateOf(null) }
+    var feedBrowseGoBack by remember { mutableStateOf<(() -> Boolean)?>(null) }
+    var feedBrowseCanGoBack by remember { mutableStateOf(false) }
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val isFullScreen = LocalFullScreenMode.current.value
     val profileUsername = state.currentUsername
@@ -143,17 +153,40 @@ fun FeedContent(
         )
     }
 
-    fun navigateUp() {
-        val wv = webView
-        if (!state.isError && wv?.canGoBack() == true) {
-            wv.goBack()
-        } else {
-            onNavigateBack()
+    state.challengeVerification?.let { verification ->
+        key(verification.url) {
+            BotChallengeDialog(
+                host = verification.host,
+                url = verification.url,
+                onPassed = { onEvent(FeedEvent.ChallengePassed(verification.host)) },
+                onUnsupported = { onEvent(FeedEvent.ChallengeUnsupported(verification.host)) },
+                onSkip = { onEvent(FeedEvent.SkipChallenge(verification.host)) },
+                onDismiss = { onEvent(FeedEvent.DismissChallenge) }
+            )
         }
     }
 
-    BackHandler(enabled = !state.isError && webView?.canGoBack() == true) {
-        webView?.goBack()
+    fun navigateUp() {
+        if (!state.isError && feedBrowseGoBack?.invoke() == true) return
+        val wv = webView
+        if (!state.isError &&
+            state.feedShellHtml.isNullOrBlank() &&
+            wv?.canGoBack() == true
+        ) {
+            wv.stopLoading()
+            wv.goBack()
+            return
+        }
+        onNavigateBack()
+    }
+
+    BackHandler(
+        enabled = !state.isError && (
+            feedBrowseCanGoBack ||
+                (state.feedShellHtml.isNullOrBlank() && webView?.canGoBack() == true)
+            )
+    ) {
+        navigateUp()
     }
 
     Scaffold(
@@ -173,18 +206,69 @@ fun FeedContent(
                                     state.groupName ?: stringResource(R.string.nav_feed)
                                 }
                             )
-                            if (state.feedSpreadAcrossInstances && profileUsername == null) {
-                                val shell = state.multiInstancesUsed.firstOrNull()
-                                    ?: state.selectedInstanceUrl.takeIf { state.currentUrl.isNotEmpty() }
+                            if (profileUsername == null && state.accountsTotal > 0) {
+                                // NewPipe-like account progress for both Spread and single-host Feed All.
+                                val progressText = when {
+                                    !state.accountsLoadComplete -> stringResource(
+                                        R.string.feed_accounts_checked_progress,
+                                        state.accountsChecked,
+                                        state.accountsTotal
+                                    )
+                                    state.accountsFromCache > 0 -> stringResource(
+                                        R.string.feed_accounts_checked_cached,
+                                        state.accountsChecked,
+                                        state.accountsTotal,
+                                        state.accountsFromCache
+                                    )
+                                    else -> stringResource(
+                                        R.string.feed_accounts_checked_done,
+                                        state.accountsChecked
+                                    )
+                                }
                                 Text(
-                                    text = if (shell != null) {
-                                        UrlPolicy.displayHost(shell)
-                                    } else {
-                                        stringResource(R.string.feed_multi_status_probing)
-                                    },
+                                    text = progressText,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                if (state.feedSpreadAcrossInstances) {
+                                    val nitterCount = state.multiInstancesUsed.size
+                                    val spreadLine = when {
+                                        nitterCount <= 0 && !state.multiLoadComplete ->
+                                            stringResource(R.string.feed_multi_status_probing)
+                                        nitterCount > 0 && state.multiLoadComplete ->
+                                            stringResource(
+                                                R.string.feed_multi_spread_subtitle,
+                                                nitterCount
+                                            )
+                                        nitterCount > 0 ->
+                                            stringResource(
+                                                R.string.feed_multi_spread_subtitle_loading,
+                                                nitterCount
+                                            )
+                                        else -> null
+                                    }
+                                    if (spreadLine != null) {
+                                        Text(
+                                            text = spreadLine,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    val hostsLine = formatSpreadHostsLine(state.multiInstancesUsed)
+                                    if (hostsLine != null) {
+                                        Text(
+                                            text = hostsLine,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     },
@@ -203,24 +287,23 @@ fun FeedContent(
                             }
                         }
                         if (state.feedSpreadAcrossInstances && profileUsername == null) {
-                            TextButton(onClick = { onEvent(FeedEvent.ShowMultiInstanceStatus) }) {
-                                Icon(
-                                    imageVector = Icons.Filled.Dns,
-                                    contentDescription = stringResource(R.string.feed_multi_instances_cd),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.size(4.dp))
-                                Text(
-                                    text = if (state.multiLoadComplete || state.multiInstancesUsed.isNotEmpty()) {
-                                        stringResource(
-                                            if (state.multiLoadComplete) R.string.feed_multi_count
-                                            else R.string.feed_multi_count_loading,
-                                            state.multiInstancesUsed.size.coerceAtLeast(1)
+                            val nitterBadge = when {
+                                state.multiInstancesUsed.isNotEmpty() ->
+                                    state.multiInstancesUsed.size.toString()
+                                !state.multiLoadComplete -> "…"
+                                else -> "0"
+                            }
+                            IconButton(onClick = { onEvent(FeedEvent.ShowMultiInstanceStatus) }) {
+                                BadgedBox(
+                                    badge = { Badge { Text(nitterBadge) } }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Dns,
+                                        contentDescription = stringResource(
+                                            R.string.feed_multi_instances_cd
                                         )
-                                    } else {
-                                        stringResource(R.string.feed_multi_count_loading, 0)
-                                    }
-                                )
+                                    )
+                                }
                             }
                         }
                         IconButton(onClick = onNavigateToGroups) {
@@ -246,6 +329,21 @@ fun FeedContent(
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            if (profileUsername == null &&
+                state.hasSubscriptions &&
+                state.accountsTotal > 0 &&
+                !state.accountsLoadComplete
+            ) {
+                LinearProgressIndicator(
+                    progress = {
+                        state.accountsChecked.toFloat() /
+                            state.accountsTotal.coerceAtLeast(1).toFloat()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                )
+            }
             if (!state.hasSubscriptions) {
                 Column(
                     modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -291,26 +389,21 @@ fun FeedContent(
                         isBlockDirectXEnabled = state.isBlockDirectXEnabled,
                         darkTheme = isDarkTheme,
                         isRefreshing = state.isRefreshing,
+                        loadGeneration = state.loadGeneration,
                         isProfileView = profileUsername != null,
                         isFeedView = true,
-                        feedAppendBatchUrls = if (profileUsername == null) {
-                            state.appendBatchUrls
-                        } else {
-                            emptyList()
-                        },
-                        feedAppendHtmlChunks = if (profileUsername == null) {
-                            state.appendHtmlChunks
-                        } else {
-                            emptyList()
-                        },
+                        feedAppendBatchUrls = state.appendBatchUrls,
+                        feedAppendHtmlChunks = state.appendHtmlChunks,
+                        feedShellHtml = state.feedShellHtml,
+                        feedShellStyleAssets = state.feedShellStyleAssets,
                         filterSubscriptions = state.filterSubscriptions,
                         mutedWords = state.mutedWords,
-                        onRefresh = {
-                            onEvent(FeedEvent.Refresh)
-                            if (!state.isError) {
-                                webView?.reload()
-                            }
+                        onFeedBrowseBackReady = { feedBrowseGoBack = it },
+                        onFeedBrowseCanGoBackChange = { feedBrowseCanGoBack = it },
+                        onFeedNearBottom = {
+                            if (state.canLoadOlder) onEvent(FeedEvent.LoadOlder)
                         },
+                        onRefresh = { onEvent(FeedEvent.Refresh) },
                         onPageStarted = { onEvent(FeedEvent.OnPageStarted(it)) },
                         onPageFinished = { url, _ ->
                             onEvent(FeedEvent.OnPageFinished(url))
@@ -323,11 +416,93 @@ fun FeedContent(
                         onWebViewCreated = { webView = it }
                     )
                 }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = when {
+                            state.feedSpreadAcrossInstances ->
+                                stringResource(R.string.feed_multi_status_probing)
+                            state.accountsTotal > 0 -> stringResource(
+                                R.string.feed_accounts_checked_progress,
+                                state.accountsChecked,
+                                state.accountsTotal
+                            )
+                            else -> stringResource(R.string.feed_multi_status_probing)
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    TextButton(onClick = { onEvent(FeedEvent.Refresh) }) {
+                        Text(stringResource(R.string.retry))
+                    }
+                }
             }
 
+            // Account-check bar already shows progress for Feed All—avoid a second bar.
+            val showPageLoadBar = state.isLoading &&
+                (
+                    profileUsername != null ||
+                        !state.hasSubscriptions ||
+                        state.accountsTotal <= 0 ||
+                        state.accountsLoadComplete
+                    )
             LoadingIndicator(
-                isLoading = state.isLoading
+                modifier = Modifier.align(Alignment.TopCenter),
+                isLoading = showPageLoadBar
             )
+            LoadingIndicator(
+                modifier = Modifier.align(Alignment.BottomCenter),
+                isLoading = state.isLoadingOlder
+            )
+            if (state.challengedHosts.isNotEmpty() &&
+                profileUsername == null &&
+                !isFullScreen
+            ) {
+                ChallengeBanner(
+                    hostCount = state.challengedHosts.size,
+                    onVerify = { onEvent(FeedEvent.VerifyChallenges) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(12.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChallengeBanner(
+    hostCount: Int,
+    onVerify: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 3.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.feed_challenge_banner, hostCount),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onVerify) {
+                Text(stringResource(R.string.feed_challenge_verify))
+            }
         }
     }
 }
@@ -340,7 +515,15 @@ private fun MultiInstanceStatusDialog(
     val hosts = state.multiInstancesUsed
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.feed_multi_status_title)) },
+        title = {
+            Text(
+                if (hosts.isNotEmpty()) {
+                    stringResource(R.string.feed_multi_status_title_count, hosts.size)
+                } else {
+                    stringResource(R.string.feed_multi_status_title)
+                }
+            )
+        },
         text = {
             Column(
                 modifier = Modifier
@@ -349,6 +532,16 @@ private fun MultiInstanceStatusDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (state.multiChunksTotal > 0) {
+                    if (state.multiPoolSize > 0) {
+                        Text(
+                            text = stringResource(
+                                R.string.feed_multi_status_pool,
+                                state.multiPoolSize,
+                                hosts.size
+                            ),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                     Text(
                         text = stringResource(
                             R.string.feed_multi_status_progress,
@@ -357,6 +550,27 @@ private fun MultiInstanceStatusDialog(
                         ),
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    if (state.accountsTotal > 0) {
+                        Text(
+                            text = stringResource(
+                                R.string.feed_accounts_checked_progress,
+                                state.accountsChecked,
+                                state.accountsTotal
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (state.multiChunksFailed > 0) {
+                        Text(
+                            text = stringResource(
+                                R.string.feed_multi_status_failed,
+                                state.multiChunksFailed
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     Text(
                         text = stringResource(
                             if (state.multiLoadComplete) R.string.feed_multi_status_done
@@ -371,27 +585,20 @@ private fun MultiInstanceStatusDialog(
                 if (hosts.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = stringResource(R.string.feed_multi_status_shell),
+                        text = stringResource(R.string.feed_multi_status_hosts),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Text(
-                        text = UrlPolicy.displayHost(hosts.first()),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    if (hosts.size > 1) {
-                        Spacer(modifier = Modifier.height(4.dp))
+                    hosts.forEachIndexed { index, host ->
+                        val label = UrlPolicy.displayHost(host)
                         Text(
-                            text = stringResource(R.string.feed_multi_status_chunk),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
+                            text = if (index == 0) {
+                                stringResource(R.string.feed_multi_status_host_page, label)
+                            } else {
+                                label
+                            },
+                            style = MaterialTheme.typography.bodyMedium
                         )
-                        hosts.drop(1).forEach { host ->
-                            Text(
-                                text = UrlPolicy.displayHost(host),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
                     }
                 }
             }
@@ -402,4 +609,13 @@ private fun MultiInstanceStatusDialog(
             }
         }
     )
+}
+
+private fun formatSpreadHostsLine(hosts: List<String>, maxVisible: Int = 3): String? {
+    if (hosts.isEmpty()) return null
+    val names = hosts.map { UrlPolicy.displayHost(it) }
+    if (names.size <= maxVisible) return names.joinToString(" · ")
+    val shown = names.take(maxVisible - 1)
+    val remaining = names.size - shown.size
+    return shown.joinToString(" · ") + " · +$remaining"
 }

@@ -28,16 +28,30 @@ class FeedBatchAppendTest {
         assertTrue(script.contains("peerDelayMs"))
         assertTrue(script.contains("concurrency"))
         assertTrue(script.contains("loadPeerBatches"))
+        assertTrue(script.contains("resortTimeline"))
+        assertTrue(script.contains("idLess"))
         assertFalse(script.contains("void(0)"))
     }
 
-    @Test fun injectOnePageEscapesAndAppends() {
+    @Test fun injectOnePageUsesBase64AndResorts() {
         val script = FeedBatchAppend.injectOnePageScript(
             """<div class="timeline-item"><a href="/x/status/1">hi</a></div>"""
         )
-        assertTrue(script.contains("timeline-item"))
+        assertTrue(script.contains("atob"))
+        assertTrue(script.contains("TextDecoder"))
         assertTrue(script.contains("DOMParser"))
-        assertTrue(script.contains("\\u003c"))
+        assertTrue(script.contains("resortTimeline"))
+        assertTrue(script.contains("idLess"))
         assertFalse(script.contains("fetch("))
+    }
+
+    @Test fun injectOnePageSkipsStatusesAlreadyOnScreen() {
+        val script = FeedBatchAppend.injectOnePageScript(
+            """<div class="timeline-item"><a href="/x/status/1">hi</a></div>"""
+        )
+        assertTrue(script.contains("return statusId(href) || href"))
+        val remember = script.indexOf("rememberTimeline(timeline, seen);")
+        val append = script.indexOf("appendUnseen(timeline, doc, seen);")
+        assertTrue(remember in 0 until append)
     }
 }

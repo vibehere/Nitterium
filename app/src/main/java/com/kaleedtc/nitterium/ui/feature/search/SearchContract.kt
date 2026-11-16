@@ -4,12 +4,14 @@ import com.kaleedtc.nitterium.data.frontend.FrontendType
 
 data class SearchState(
     val currentUrl: String = "",
-    val selectedInstanceUrl: String = "https://xitter.cf",
+    val selectedInstanceUrl: String = "https://shitter.thepixora.com",
     val frontend: FrontendType = FrontendType.NITTER,
     val searchQuery: String = "",
     val isSearchBarActive: Boolean = false,
     val isLoading: Boolean = false, 
     val isRefreshing: Boolean = false,
+    /** Bumped on Refresh/Retry so WebView skips stale history and force-loads. */
+    val loadGeneration: Int = 0,
     val isError: Boolean = false,
     val errorMessage: String? = null,
     val canGoBack: Boolean = false,

@@ -15,6 +15,7 @@ import com.kaleedtc.nitterium.data.repository.BackupRepository
 import com.kaleedtc.nitterium.data.repository.FeedGroupRepository
 import com.kaleedtc.nitterium.data.repository.SubscriptionRepository
 import com.kaleedtc.nitterium.data.repository.UserPreferencesRepository
+import com.kaleedtc.nitterium.data.security.FeedTimelineCache
 import com.kaleedtc.nitterium.data.security.ImageRequestInterceptor
 import com.kaleedtc.nitterium.data.security.SocksProxyController
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,7 @@ class NitteriumApplication : Application(), SingletonImageLoader.Factory {
     lateinit var feedGroupRepository: FeedGroupRepository
     lateinit var connectivityMonitor: ConnectivityMonitor
     lateinit var backupRepository: BackupRepository
+    lateinit var feedTimelineCache: FeedTimelineCache
 
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -45,6 +47,7 @@ class NitteriumApplication : Application(), SingletonImageLoader.Factory {
             this, subscriptionRepository, feedGroupRepository, userPreferencesRepository
         )
         connectivityMonitor = ConnectivityMonitorImpl(this)
+        feedTimelineCache = FeedTimelineCache(this)
 
         applicationScope.launch {
             userPreferencesRepository.socksProxy.collect { settings ->
@@ -55,9 +58,8 @@ class NitteriumApplication : Application(), SingletonImageLoader.Factory {
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         val cookieManager = CookieManager.getInstance()
-        val defaultUserAgent = WebSettings.getDefaultUserAgent(context)
-        val strippedUserAgent = defaultUserAgent.replace("; wv", "")
-            .replace(Regex("Version/\\d+\\.\\d+\\s+"), "")
+        val strippedUserAgent =
+            UserPreferencesRepository.browserUserAgent(WebSettings.getDefaultUserAgent(context))
 
         val okHttpClient = OkHttpClient.Builder()
             .followRedirects(false)

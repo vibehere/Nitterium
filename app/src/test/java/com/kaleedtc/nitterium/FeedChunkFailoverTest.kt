@@ -13,6 +13,12 @@ class FeedChunkFailoverTest {
                 """<div class="timeline"><div class="tweet-content">hi</div><a href="/u/status/9">x</a></div>"""
             )
         )
+        assertTrue(
+            FeedChunkFetcher.looksLikeTimeline(
+                """<!DOCTYPE html><html><head><link href="/css/fontello.css"/></head>
+                  <body><div class="panel-container"><div class="timeline"></div></div></body></html>"""
+            )
+        )
         assertFalse(FeedChunkFetcher.looksLikeTimeline("<html><body>Just Anubis challenge</body></html>"))
         assertFalse(FeedChunkFetcher.looksLikeTimeline(""))
     }

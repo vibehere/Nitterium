@@ -18,11 +18,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material3.AlertDialog
@@ -64,6 +68,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.kaleedtc.nitterium.ui.common.GroupAssignmentDialog
+import com.kaleedtc.nitterium.data.model.FeedGroup
 import com.kaleedtc.nitterium.data.model.Subscription
 import com.kaleedtc.nitterium.data.model.SubscriptionSortOrder
 
@@ -323,6 +328,7 @@ fun SubscriptionsContent(
 
                     SubscriptionItem(
                         subscription = sub,
+                        groups = state.groups,
                         modifier = modifier,
                         onClick = { onNavigateToUser(sub.username) },
                         onDelete = { onEvent(SubscriptionsEvent.RequestDelete(sub)) },
@@ -334,22 +340,26 @@ fun SubscriptionsContent(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SubscriptionItem(
     subscription: Subscription,
+    groups: List<FeedGroup>,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onManageGroups: () -> Unit
 ) {
-    var showActions by remember(subscription.username) { mutableStateOf(false) }
+    val assignedGroups = remember(subscription.groupIds, groups) {
+        groups.filter { it.id in subscription.groupIds }
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .padding(vertical = 12.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         if (subscription.avatarUrl != null) {
             AsyncImage(
@@ -371,37 +381,52 @@ fun SubscriptionItem(
             )
         }
 
-        Text(
-            text = "@${subscription.username}",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "@${subscription.username}",
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (assignedGroups.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.groups_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    assignedGroups.forEach { group ->
+                        AssistChip(
+                            onClick = onManageGroups,
+                            label = {
+                                Text(
+                                    group.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
 
-        Box {
-            IconButton(onClick = { showActions = true }) {
-                Icon(
-                    imageVector = Icons.Default.PersonRemove,
-                    contentDescription = stringResource(R.string.subscription_options, subscription.username)
-                )
-            }
-            DropdownMenu(expanded = showActions, onDismissRequest = { showActions = false }) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.assign_to_groups)) },
-                    onClick = {
-                        showActions = false
-                        onManageGroups()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.unsubscribe_confirm), color = MaterialTheme.colorScheme.error) },
-                    onClick = {
-                        showActions = false
-                        onDelete()
-                    }
-                )
-            }
+        IconButton(onClick = onManageGroups) {
+            Icon(
+                imageVector = Icons.Default.Edit,
+                contentDescription = stringResource(R.string.edit_groups_cd, subscription.username)
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(
+                imageVector = Icons.Default.PersonRemove,
+                contentDescription = stringResource(R.string.unsubscribe_confirm),
+                tint = MaterialTheme.colorScheme.error
+            )
         }
     }
 }

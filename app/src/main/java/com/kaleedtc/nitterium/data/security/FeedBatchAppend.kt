@@ -1,5 +1,8 @@
 package com.kaleedtc.nitterium.data.security
 
+import java.nio.charset.StandardCharsets
+import java.util.Base64
+
 object FeedBatchAppend {
     /** Delay between older/cursor page fetches (rate-limit friendly). */
     const val DEFAULT_DELAY_MS = 1_000
@@ -9,9 +12,97 @@ object FeedBatchAppend {
      * before the user finishes scrolling a group they just viewed.
      */
     const val INITIAL_DELAY_MS = 200
-    /** How many peer batches may be in flight at once. */
-    const val PEER_CONCURRENCY = 3
+    /** How many peer batches may be in flight at once (clearnet). */
+    const val PEER_CONCURRENCY = 4
+    /** Tor/SOCKS keeps fewer in-flight fetches to avoid circuit overload. */
+    const val PEER_CONCURRENCY_TOR = 2
+    /**
+     * Extra hosts after a chunk's assigned instance fails. Scoreboard-free so
+     * failovers rotate through the pool (Tor-capable when SOCKS is on) instead
+     * of collapsing onto a single winner — enough to keep accounts loading.
+     */
+    const val PEER_FAILOVER_HOSTS = 3
+    /** Cap for finding the first working shell host at multi-feed start. */
+    const val SHELL_HOST_ATTEMPTS = 5
     const val DEFAULT_OLDER_PAGES_PER_CHUNK = 8
+
+    /** Shared JS helpers for status-id ordering (newest snowflake first). */
+    private val timelineHelpersJs = """
+        function statusId(href) {
+            if (!href) return null;
+            var m = String(href).match(/\/status\/(\d+)/);
+            return m ? m[1] : null;
+        }
+        function idLess(a, b) {
+            if (!a || !b) return false;
+            a = String(a).replace(/^0+/, '') || '0';
+            b = String(b).replace(/^0+/, '') || '0';
+            if (a.length !== b.length) return a.length < b.length;
+            return a < b;
+        }
+        function resortTimeline(timeline) {
+            if (!timeline) return;
+            var sentinel = timeline.querySelector('.show-more:not(.timeline-item), .timeline-item.show-more');
+            var nodes = Array.prototype.slice.call(
+                timeline.querySelectorAll('.timeline-item:not(.show-more)')
+            );
+            nodes.sort(function(left, right) {
+                var linkA = left.querySelector('a.tweet-link, a[href*="/status/"]');
+                var linkB = right.querySelector('a.tweet-link, a[href*="/status/"]');
+                var idA = statusId(linkA && linkA.getAttribute('href'));
+                var idB = statusId(linkB && linkB.getAttribute('href'));
+                if (!idA && !idB) return 0;
+                if (!idA) return 1;
+                if (!idB) return -1;
+                if (idLess(idA, idB)) return 1;
+                if (idLess(idB, idA)) return -1;
+                return 0;
+            });
+            nodes.forEach(function(node) {
+                if (sentinel) timeline.insertBefore(node, sentinel);
+                else timeline.appendChild(node);
+            });
+        }
+        function itemKey(item) {
+            var link = item.querySelector('a.tweet-link, a[href*="/status/"]');
+            var href = link && link.getAttribute('href');
+            return statusId(href) || href;
+        }
+        function rememberTimeline(timeline, seen) {
+            timeline.querySelectorAll('.timeline-item:not(.show-more)').forEach(function(item) {
+                var key = itemKey(item);
+                if (key) seen[key] = true;
+            });
+        }
+        function appendUnseen(timeline, doc, seen) {
+            doc.querySelectorAll('.timeline-item').forEach(function(item) {
+                if (item.classList.contains('show-more')) return;
+                var key = itemKey(item);
+                if (key && seen[key]) return;
+                if (key) seen[key] = true;
+                insertItem(timeline, item, seen);
+            });
+        }
+        function insertItem(timeline, node, seen) {
+            var imported = document.importNode(node, true);
+            var sentinel = timeline.querySelector('.show-more:not(.timeline-item), .timeline-item.show-more');
+            var link = imported.querySelector('a.tweet-link, a[href*="/status/"]');
+            var id = statusId(link && link.getAttribute('href'));
+            if (id) {
+                var items = timeline.querySelectorAll('.timeline-item:not(.show-more)');
+                for (var i = 0; i < items.length; i++) {
+                    var otherLink = items[i].querySelector('a.tweet-link, a[href*="/status/"]');
+                    var otherId = statusId(otherLink && otherLink.getAttribute('href'));
+                    if (otherId && idLess(otherId, id)) {
+                        timeline.insertBefore(imported, items[i]);
+                        return;
+                    }
+                }
+            }
+            if (sentinel) timeline.insertBefore(imported, sentinel);
+            else timeline.appendChild(imported);
+        }
+    """.trimIndent()
 
     fun script(
         urls: List<String>,
@@ -42,39 +133,10 @@ object FeedBatchAppend {
                 var seen = window.__nitteriumSeenStatuses || (window.__nitteriumSeenStatuses = Object.create(null));
                 var seenPages = Object.create(null);
                 var olderQueue = [];
-                function statusId(href) {
-                    if (!href) return null;
-                    var m = String(href).match(/\/status\/(\d+)/);
-                    return m ? m[1] : null;
-                }
-                function remember(root) {
-                    root.querySelectorAll('a.tweet-link, a[href*="/status/"]').forEach(function(a) {
-                        var href = a.getAttribute('href');
-                        if (href) seen[href] = true;
-                    });
-                }
+                $timelineHelpersJs
                 function showMoreAnchor() {
                     return timeline.querySelector('.show-more:not(.timeline-item) a[href*="cursor"], .show-more a[href*="cursor"]') ||
                         timeline.querySelector('.show-more:not(.timeline-item) a[href], .show-more a[href]');
-                }
-                function insertItem(node) {
-                    var imported = document.importNode(node, true);
-                    var sentinel = timeline.querySelector('.show-more:not(.timeline-item), .timeline-item.show-more');
-                    var link = imported.querySelector('a.tweet-link, a[href*="/status/"]');
-                    var id = statusId(link && link.getAttribute('href'));
-                    if (id) {
-                        var items = timeline.querySelectorAll('.timeline-item:not(.show-more)');
-                        for (var i = 0; i < items.length; i++) {
-                            var otherLink = items[i].querySelector('a.tweet-link, a[href*="/status/"]');
-                            var otherId = statusId(otherLink && otherLink.getAttribute('href'));
-                            if (otherId && otherId < id) {
-                                timeline.insertBefore(imported, items[i]);
-                                return;
-                            }
-                        }
-                    }
-                    if (sentinel) timeline.insertBefore(imported, sentinel);
-                    else timeline.appendChild(imported);
                 }
                 function queueOlderFrom(doc, pageUrl) {
                     if (olderCap <= 0) return;
@@ -86,20 +148,13 @@ object FeedBatchAppend {
                         olderQueue.push(next);
                     } catch (e) {}
                 }
-                remember(timeline);
+                rememberTimeline(timeline, seen);
                 function appendFromHtml(html, pageUrl) {
                     try {
                         var doc = new DOMParser().parseFromString(html, 'text/html');
-                        var items = doc.querySelectorAll('.timeline-item');
-                        items.forEach(function(item) {
-                            if (item.classList.contains('show-more')) return;
-                            var link = item.querySelector('a.tweet-link, a[href*="/status/"]');
-                            var href = link && link.getAttribute('href');
-                            if (href && seen[href]) return;
-                            if (href) seen[href] = true;
-                            insertItem(item);
-                        });
+                        appendUnseen(timeline, doc, seen);
                         queueOlderFrom(doc, pageUrl);
+                        resortTimeline(timeline);
                     } catch (e) {}
                 }
                 function loadUrl(url, done) {
@@ -133,6 +188,7 @@ object FeedBatchAppend {
                                         setTimeout(pump, peerDelayMs);
                                     } else if (inflight === 0 && !finished) {
                                         finished = true;
+                                        resortTimeline(timeline);
                                         loadOlder(0);
                                     }
                                 });
@@ -140,6 +196,7 @@ object FeedBatchAppend {
                         }
                         if (next >= urls.length && inflight === 0 && !finished) {
                             finished = true;
+                            resortTimeline(timeline);
                             loadOlder(0);
                         }
                     }
@@ -164,51 +221,29 @@ object FeedBatchAppend {
 
     fun injectOnePageScript(html: String): String {
         if (html.isBlank()) return "javascript:void(0)"
-        val encoded = jsString(html)
+        // Base64 keeps huge peer pages under evaluateJavascript string limits.
+        val b64 = Base64.getEncoder().encodeToString(html.toByteArray(StandardCharsets.UTF_8))
         return """
             javascript:(function() {
-                var html = $encoded;
+                function decodeHtml(b64) {
+                    var bin = atob(b64);
+                    var bytes = new Uint8Array(bin.length);
+                    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                    return new TextDecoder('utf-8').decode(bytes);
+                }
+                var html = decodeHtml(${jsString(b64)});
                 if (!html) return;
                 var timeline = document.querySelector('.timeline') ||
                     document.querySelector('#timeline') ||
                     document.querySelector('.timeline-container');
                 if (!timeline) return;
                 var seen = window.__nitteriumSeenStatuses || (window.__nitteriumSeenStatuses = Object.create(null));
-                function statusId(href) {
-                    if (!href) return null;
-                    var m = String(href).match(/\/status\/(\d+)/);
-                    return m ? m[1] : null;
-                }
-                function insertItem(item) {
-                    var imported = document.importNode(item, true);
-                    var sentinel = timeline.querySelector('.show-more:not(.timeline-item), .timeline-item.show-more');
-                    var link = imported.querySelector('a.tweet-link, a[href*="/status/"]');
-                    var id = statusId(link && link.getAttribute('href'));
-                    if (id) {
-                        var items = timeline.querySelectorAll('.timeline-item:not(.show-more)');
-                        for (var i = 0; i < items.length; i++) {
-                            var otherLink = items[i].querySelector('a.tweet-link, a[href*="/status/"]');
-                            var otherId = statusId(otherLink && otherLink.getAttribute('href'));
-                            if (otherId && otherId < id) {
-                                timeline.insertBefore(imported, items[i]);
-                                return;
-                            }
-                        }
-                    }
-                    if (sentinel) timeline.insertBefore(imported, sentinel);
-                    else timeline.appendChild(imported);
-                }
+                $timelineHelpersJs
                 try {
                     var doc = new DOMParser().parseFromString(html, 'text/html');
-                    var items = doc.querySelectorAll('.timeline-item');
-                    items.forEach(function(item) {
-                        if (item.classList.contains('show-more')) return;
-                        var link = item.querySelector('a.tweet-link, a[href*="/status/"]');
-                        var href = link && link.getAttribute('href');
-                        if (href && seen[href]) return;
-                        if (href) seen[href] = true;
-                        insertItem(item);
-                    });
+                    rememberTimeline(timeline, seen);
+                    appendUnseen(timeline, doc, seen);
+                    resortTimeline(timeline);
                     if (window.__nitteriumApplyFeedFilters) window.__nitteriumApplyFeedFilters();
                 } catch (e) {}
             })();

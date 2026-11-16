@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -126,14 +127,15 @@ fun ProfileContent(
     fun navigateUp() {
         val wv = webView
         if (!state.isError && wv?.canGoBack() == true) {
+            wv.stopLoading()
             wv.goBack()
         } else {
             onNavigateBack()
         }
     }
 
-    // Handle Back Press
     BackHandler(enabled = !state.isError && webView?.canGoBack() == true) {
+        webView?.stopLoading()
         webView?.goBack()
     }
 
@@ -195,15 +197,11 @@ fun ProfileContent(
                         isBlockDirectXEnabled = state.isBlockDirectXEnabled,
                         darkTheme = isDarkTheme,
                         isRefreshing = state.isRefreshing,
+                        loadGeneration = state.loadGeneration,
                         isProfileView = true,
                         filterSubscriptions = state.filterSubscriptions,
                         mutedWords = state.mutedWords,
-                        onRefresh = { 
-                            onEvent(ProfileEvent.Refresh)
-                            if (!state.isError) {
-                                webView?.reload()
-                            }
-                        },
+                        onRefresh = { onEvent(ProfileEvent.Refresh) },
                         onPageStarted = { onEvent(ProfileEvent.OnPageStarted(it)) },
                         onPageFinished = { url, _ ->
                             onEvent(ProfileEvent.OnPageFinished(url))
@@ -217,6 +215,7 @@ fun ProfileContent(
             }
 
             com.kaleedtc.nitterium.ui.common.LoadingIndicator(
+                modifier = Modifier.align(Alignment.TopCenter),
                 isLoading = state.isLoading
             )
         }

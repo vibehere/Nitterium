@@ -24,12 +24,14 @@ sealed interface ProfileEvent {
 data class ProfileState(
     val username: String = "",
     val currentUrl: String = "",
-    val selectedInstanceUrl: String = "https://xitter.cf",
+    val selectedInstanceUrl: String = "https://shitter.thepixora.com",
     val displayedPageUrl: String? = null,
     val frontend: FrontendType = FrontendType.NITTER,
     val avatarUrl: String? = null,
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
+    /** Bumped on Refresh/Retry so WebView skips stale history and force-loads. */
+    val loadGeneration: Int = 0,
     val isError: Boolean = false,
     val errorMessage: String? = null,
     val groups: List<com.kaleedtc.nitterium.data.model.FeedGroup> = emptyList(),

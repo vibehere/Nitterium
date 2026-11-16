@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Clearnet stays HTTPS-only (UrlPolicy rejects http:// clearnet instances).
+  Tor onion services are HTTP; without this, OkHttp/WebView block them as cleartext.
+  Domain "onion" + includeSubdomains matches hostnames ending in .onion.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">onion</domain>
+    </domain-config>
+</network-security-config>

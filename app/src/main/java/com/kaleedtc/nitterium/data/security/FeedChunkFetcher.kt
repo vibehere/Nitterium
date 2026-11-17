@@ -97,7 +97,7 @@ object FeedChunkFetcher {
             if (key in tried) continue
             val allowDeadRetry = preferredKey != null && key == preferredKey
             if (key in deadHosts && !allowDeadRetry) continue
-            if (MultiTimelineSupport.isSetAside(host)) continue
+            if (HostLimitations.isSetAside(host, HostLimitation.MULTI_TIMELINE_DISABLED)) continue
             tried += key
             attempts += 1
             val pageUrl = runCatching {
@@ -154,8 +154,8 @@ object FeedChunkFetcher {
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful || !looksLikeTimeline(body)) {
                     challenged = isBotChallenge(response.code, body, response.headers.toMap())
-                    val disabled = !challenged && MultiTimelineSupport.looksDisabled(body)
-                    if (disabled) MultiTimelineSupport.setAside(host)
+                    val disabled = !challenged && HostLimitations.looksMultiTimelineDisabled(body)
+                    if (disabled) HostLimitations.setAside(host, HostLimitation.MULTI_TIMELINE_DISABLED)
                     failReason = when {
                         challenged -> "challenge_http_${response.code}"
                         disabled -> "multi_timeline_disabled"

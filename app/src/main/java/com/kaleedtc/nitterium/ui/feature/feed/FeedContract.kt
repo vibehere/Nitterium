@@ -4,6 +4,7 @@ import com.kaleedtc.nitterium.data.frontend.FrontendType
 import com.kaleedtc.nitterium.data.model.FeedGroup
 import com.kaleedtc.nitterium.data.model.Subscription
 import com.kaleedtc.nitterium.data.model.SubscriptionOptions
+import com.kaleedtc.nitterium.data.security.LimitedHost
 
 data class FeedState(
     val frontend: FrontendType = FrontendType.NITTER,
@@ -37,6 +38,8 @@ data class FeedState(
     val multiChunksTotal: Int = 0,
     val multiLoadComplete: Boolean = false,
     val showMultiInstanceStatus: Boolean = false,
+    /** Pool Nitters left out because they cannot serve the current feed mode. */
+    val skippedHosts: List<LimitedHost> = emptyList(),
     /** Nitters whose bot check blocked some accounts until it is passed in a browser. */
     val challengedHosts: List<String> = emptyList(),
     val challengeVerification: ChallengeVerification? = null,

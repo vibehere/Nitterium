@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kaleedtc.nitterium.R
+import com.kaleedtc.nitterium.data.security.HostLimitation
 import com.kaleedtc.nitterium.data.security.UrlPolicy
 import com.kaleedtc.nitterium.ui.common.BotChallengeDialog
 import com.kaleedtc.nitterium.ui.common.ErrorScreen
@@ -286,7 +287,9 @@ fun FeedContent(
                                 onEvent(FeedEvent.EditGroups)
                             }
                         }
-                        if (state.feedSpreadAcrossInstances && profileUsername == null) {
+                        if ((state.feedSpreadAcrossInstances || state.skippedHosts.isNotEmpty()) &&
+                            profileUsername == null
+                        ) {
                             val nitterBadge = when {
                                 state.multiInstancesUsed.isNotEmpty() ->
                                     state.multiInstancesUsed.size.toString()
@@ -601,6 +604,25 @@ private fun MultiInstanceStatusDialog(
                         )
                     }
                 }
+                if (state.skippedHosts.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.feed_multi_status_skipped),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    state.skippedHosts.forEach { skipped ->
+                        Text(
+                            text = stringResource(
+                                R.string.feed_multi_status_skipped_host,
+                                UrlPolicy.displayHost(skipped.host),
+                                stringResource(skippedReason(skipped.limitation))
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
@@ -609,6 +631,12 @@ private fun MultiInstanceStatusDialog(
             }
         }
     )
+}
+
+private fun skippedReason(limitation: HostLimitation): Int = when (limitation) {
+    HostLimitation.MULTI_TIMELINE_DISABLED -> R.string.feed_skipped_reason_search_disabled
+    HostLimitation.NO_RSS -> R.string.feed_skipped_reason_no_rss
+    HostLimitation.NEEDS_JAVASCRIPT -> R.string.feed_skipped_reason_needs_js
 }
 
 private fun formatSpreadHostsLine(hosts: List<String>, maxVisible: Int = 3): String? {

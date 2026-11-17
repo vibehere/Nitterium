@@ -77,24 +77,31 @@ object NitterRss {
     ): String? = withContext(Dispatchers.IO) {
         if (usernames.isEmpty()) return@withContext null
         val base = instanceUrl.trimEnd('/')
+        if (HostLimitations.isSetAside(base, HostLimitation.NO_RSS)) return@withContext null
         val ordered = usernames
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinctBy { it.lowercase() }
         val limit = concurrency.coerceIn(1, 8)
-        val items = coroutineScope {
+        val replies = coroutineScope {
             ordered.chunked(limit).flatMap { wave ->
                 wave.map { username ->
                     async {
-                        val xml = fetchRssXml(
+                        username to fetchRssXml(
                             url = "$base/$username/rss",
                             userAgent = userAgent,
                             instanceKey = instanceKey
-                        ) ?: return@async emptyList()
-                        parseItems(xml, fallbackUsername = username, instanceBase = base)
+                        )
                     }
-                }.awaitAll().flatten()
+                }.awaitAll()
             }
+        }
+        // One missing account answers 404 too, so only a host where no account got a feed is recorded.
+        if (replies.isNotEmpty() && replies.all { (_, reply) -> reply.unsupported }) {
+            HostLimitations.setAside(base, HostLimitation.NO_RSS)
+        }
+        val items = replies.flatMap { (username, reply) ->
+            reply.xml?.let { parseItems(it, fallbackUsername = username, instanceBase = base) }.orEmpty()
         }
         if (items.isEmpty()) return@withContext null
         toTimelineHtml(items.sortedByDescending { it.statusId.toLongOrNull() ?: 0L })
@@ -207,7 +214,9 @@ object NitterRss {
         return out
     }
 
-    private fun fetchRssXml(url: String, userAgent: String, instanceKey: String): String? =
+    private class RssReply(val xml: String?, val unsupported: Boolean)
+
+    private fun fetchRssXml(url: String, userAgent: String, instanceKey: String): RssReply =
         runCatching {
             val ua = UserPreferencesRepository.withAccessKey(userAgent, instanceKey)
             val request = Request.Builder()
@@ -223,16 +232,16 @@ object NitterRss {
                 .get()
                 .build()
             clientFor(url).newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@runCatching null
                 val body = response.body?.string().orEmpty()
-                if (!body.contains("<item", ignoreCase = true) &&
-                    !body.contains("<entry", ignoreCase = true)
-                ) {
-                    return@runCatching null
-                }
-                body
+                val unsupported = HostLimitations.looksRssUnsupported(response.code, body)
+                val hasItems = body.contains("<item", ignoreCase = true) ||
+                    body.contains("<entry", ignoreCase = true)
+                RssReply(
+                    xml = body.takeIf { response.isSuccessful && hasItems },
+                    unsupported = unsupported
+                )
             }
-        }.getOrNull()
+        }.getOrElse { RssReply(xml = null, unsupported = false) }
 
     private fun cdataOrText(block: String, tag: String): String {
         val cdata = Regex(

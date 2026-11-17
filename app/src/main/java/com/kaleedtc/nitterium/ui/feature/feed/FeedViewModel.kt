@@ -20,7 +20,8 @@ import com.kaleedtc.nitterium.data.security.FeedChunkFetcher
 import com.kaleedtc.nitterium.data.security.FeedHostScoreboard
 import com.kaleedtc.nitterium.data.security.FeedPrivacyPartition
 import com.kaleedtc.nitterium.data.security.FeedTimelineCache
-import com.kaleedtc.nitterium.data.security.MultiTimelineSupport
+import com.kaleedtc.nitterium.data.security.HostLimitation
+import com.kaleedtc.nitterium.data.security.HostLimitations
 import com.kaleedtc.nitterium.data.security.NitterRss
 import com.kaleedtc.nitterium.data.security.SocksProxyController
 import com.kaleedtc.nitterium.data.security.TimelineHtml
@@ -81,6 +82,7 @@ class FeedViewModel(
     /** Shared by all parallel chunks of one feed load so a failing Nitter is hit once. */
     private var runDeadHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private var runChallengedHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile private var poolCandidates: List<String> = emptyList()
     private var runUsedHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Next "Load more" page per chunk, always on the Nitter that issued its cursor. */
@@ -513,8 +515,9 @@ class FeedViewModel(
                     keys = keys,
                     frontend = frontend,
                     shellProbeDead = shellProbeDead,
-                    onChallenge = { shellChallenged += it }
+                    onChallenge = { if (!recordChallenge(it)) shellChallenged += it }
                 )
+                refreshSkippedHosts()
                 if (opened == null) {
                     val users = assignments.flatMap { it.usernames }.distinct()
                     // Tor VPN (.onion, SOCKS off): OkHttp often cannot resolve onions while
@@ -525,18 +528,26 @@ class FeedViewModel(
                             assignments.any {
                                 TorOnionPreference.isOnionInstance(it.instanceUrl)
                             }
-                    if (spreadAcrossInstances.value && !onionWebViewFallback) {
-                        // Never dump every account onto one Nitter when spread is on.
+                    val jsOffNeedsBrowser = state.value.disableWebJavascript &&
+                        HostLimitations.isSetAside(primary, HostLimitation.NEEDS_JAVASCRIPT)
+                    if ((spreadAcrossInstances.value && !onionWebViewFallback) || jsOffNeedsBrowser) {
                         setState {
                             copy(
                                 isLoading = false,
                                 isError = true,
-                                errorMessage = SPREAD_UNAVAILABLE_MESSAGE,
+                                errorMessage = if (jsOffNeedsBrowser) {
+                                    JS_REQUIRED_MESSAGE
+                                } else {
+                                    SPREAD_UNAVAILABLE_MESSAGE
+                                },
                                 multiLoadComplete = true,
                                 accountsLoadComplete = true
                             )
                         }
-                        queueShellChallenges(shellChallenged, assignments)
+                        if (!jsOffNeedsBrowser) {
+                            queueShellChallenges(shellChallenged, assignments)
+                        }
+                        refreshSkippedHosts()
                     } else {
                         openSingleInstanceFallback(
                             usernames = users,
@@ -595,6 +606,7 @@ class FeedViewModel(
                     )
                 }
 
+                refreshSkippedHosts()
                 if (peerChunks.isEmpty()) return@launch
                 delay(FeedBatchAppend.INITIAL_DELAY_MS.toLong())
                 val concurrency = peerConcurrency()
@@ -806,6 +818,7 @@ class FeedViewModel(
         val preferredKey = preferred.lowercase()
         if (preferredKey in runChallenged) challenged += preferred
         val onChallenge: (String) -> Unit = {
+            recordChallenge(it)
             challenged += it
             runChallenged += it.trim().trimEnd('/').lowercase()
         }
@@ -927,7 +940,7 @@ class FeedViewModel(
 
     private fun applyMultiPeerResult(result: MultiPeerResult) {
         result.html?.let { registerOlderPage(result.usernames, result.host, result.pageUrl, it) }
-        if (result.html == null) {
+        if (result.html == null && !state.value.disableWebJavascript) {
             FeedChallengeQueue.hostFor(result.chunk, result.challengedHosts)?.let { host ->
                 challengeQueue.add(host, result.chunk)
                 setState { copy(challengedHosts = challengeQueue.hosts) }
@@ -956,6 +969,7 @@ class FeedViewModel(
                     if (ok && result.fromCache) result.usernames.size else 0
             )
         }
+        refreshSkippedHosts()
     }
 
     private fun resetFeedRun() {
@@ -1040,7 +1054,8 @@ class FeedViewModel(
 
     /** Past its bot check but refusing multi-account timelines: load its accounts elsewhere. */
     private fun moveChunksOffHost(host: String) {
-        MultiTimelineSupport.setAside(host)
+        HostLimitations.setAside(host, HostLimitation.MULTI_TIMELINE_DISABLED)
+        refreshSkippedHosts()
         val context = challengeRetry ?: return
         val chunks = challengeQueue.take(host)
         if (chunks.isEmpty()) return
@@ -1276,6 +1291,28 @@ class FeedViewModel(
         return socksOn || TorOnionPreference.isOnionInstance(state.value.selectedInstanceUrl)
     }
 
+    /** Limitations that make a Nitter useless in the current feed mode. */
+    private fun relevantLimitations(): Set<HostLimitation> = buildSet {
+        add(HostLimitation.MULTI_TIMELINE_DISABLED)
+        if (preferRss.value) add(HostLimitation.NO_RSS)
+        if (state.value.disableWebJavascript) add(HostLimitation.NEEDS_JAVASCRIPT)
+    }
+
+    private fun refreshSkippedHosts() {
+        val limited = HostLimitations.limitedHosts(
+            listOf(state.value.selectedInstanceUrl) + poolCandidates,
+            relevantLimitations()
+        )
+        setState { copy(skippedHosts = limited) }
+    }
+
+    /** Bot checks need JavaScript, so with it off the Nitter is recorded instead of verified. */
+    private fun recordChallenge(host: String): Boolean {
+        if (!state.value.disableWebJavascript) return false
+        HostLimitations.setAside(host, HostLimitation.NEEDS_JAVASCRIPT)
+        return true
+    }
+
     private fun instancePool(primary: String, custom: Set<String>): List<String> {
         val socksOn = socksEnabled.value || SocksProxyController.current().enabled
         val onionOnly = onionOnlyActive()
@@ -1288,16 +1325,22 @@ class FeedViewModel(
         } else {
             knownInstances + discoveredInstances.value + custom + primaryHost
         }
-        val pool = basePool
+        val candidates = basePool
             .map { it.trim().trimEnd('/') }
             .filter { it.isNotBlank() }
             .filter { onionReachable || !TorOnionPreference.isOnionInstance(it) }
-            .filter { it.equals(primaryHost, ignoreCase = true) || !MultiTimelineSupport.isSetAside(it) }
             .filter { url ->
                 val key = url.lowercase()
                 key !in disabled || key == primaryHost.lowercase()
             }
             .distinctBy { it.lowercase() }
+        poolCandidates = candidates
+        val limited = HostLimitations.limitedHosts(candidates, relevantLimitations())
+        refreshSkippedHosts()
+        val limitedKeys = limited.map { it.host.lowercase() }.toSet()
+        val pool = candidates.filter {
+            it.equals(primaryHost, ignoreCase = true) || it.lowercase() !in limitedKeys
+        }
         val resolved = pool.ifEmpty {
             listOf(primaryHost).filter { it.isNotBlank() }
         }
@@ -1438,6 +1481,7 @@ class FeedViewModel(
                                             if (result.fromCache) result.usernames.size else 0
                                     )
                                 }
+                                refreshSkippedHosts()
                             }
                         }
                     }.awaitAll()
@@ -1485,7 +1529,10 @@ class FeedViewModel(
                 shellBase = shell,
                 userAgent = defaultUserAgent,
                 instanceKey = instanceKey,
-                onChallenge = { challengedHosts += it }
+                onChallenge = {
+                    recordChallenge(it)
+                    challengedHosts += it
+                }
             )?.html
         } else {
             FeedChunkFetcher.fetchTimelineHtml(
@@ -1494,7 +1541,10 @@ class FeedViewModel(
                 shellBase = shell,
                 userAgent = defaultUserAgent,
                 instanceKey = instanceKey,
-                onChallenge = { challengedHosts += it }
+                onChallenge = {
+                    recordChallenge(it)
+                    challengedHosts += it
+                }
             )?.html
         }
         if (!html.isNullOrBlank()) {
@@ -1662,7 +1712,7 @@ class FeedViewModel(
             }
             is FeedEvent.ChallengeUnsupported -> {
                 if (challengeRetry == null) {
-                    MultiTimelineSupport.setAside(event.host)
+                    HostLimitations.setAside(event.host, HostLimitation.MULTI_TIMELINE_DISABLED)
                     setState { copy(challengeVerification = null) }
                     onEvent(FeedEvent.Refresh)
                 } else {
@@ -1841,6 +1891,8 @@ class FeedViewModel(
             "Onion-only mode needs a working .onion Nitter. Add one or disable onion-only."
         private const val SPREAD_UNAVAILABLE_MESSAGE =
             "Could not open any Nitter for this feed. With Tor VPN, pick a working .onion (leave SOCKS off) and retry."
+        private const val JS_REQUIRED_MESSAGE =
+            "This Nitter only works with JavaScript. Turn Disable JavaScript off, or pick another instance."
 
         fun defaultUserAgent(context: android.content.Context): String =
             UserPreferencesRepository.browserUserAgent(WebSettings.getDefaultUserAgent(context))

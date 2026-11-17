@@ -51,6 +51,16 @@ class InstanceHealthProbeTest {
     }
 
     @Test
+    fun looksLikeChallengeDetectsDogWaf() {
+        assertTrue(
+            InstanceHealthProbe.looksLikeChallenge(
+                """<html><title>Prove You're Human</title><p>DogWAF-fork</p></html>""",
+                emptyMap()
+            )
+        )
+    }
+
+    @Test
     fun looksLikeChallengeDoesNotFlagRealTimelineBehindCfServer() {
         assertFalse(
             InstanceHealthProbe.looksLikeChallenge(

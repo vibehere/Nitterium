@@ -37,6 +37,11 @@
     <string name="feed_multi_status_done">All chunks finished</string>
     <string name="feed_multi_status_loading">Still loading more chunks…</string>
     <string name="feed_multi_status_close">Close</string>
+    <string name="feed_multi_status_skipped">Not usable in this mode</string>
+    <string name="feed_multi_status_skipped_host">%1$s — %2$s</string>
+    <string name="feed_skipped_reason_search_disabled">search disabled</string>
+    <string name="feed_skipped_reason_no_rss">no RSS</string>
+    <string name="feed_skipped_reason_needs_js">needs JavaScript</string>
     <string name="feed_multi_instances_cd">Show which Nitter instances this feed used</string>
     <string name="feed_challenge_banner">%1$d Nitter(s) need a browser check before their accounts load</string>
     <string name="feed_challenge_verify">Verify</string>

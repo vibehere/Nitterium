@@ -117,11 +117,18 @@ object InstanceHealthProbe {
             FeedHostScoreboard.recordFailure(base, elapsedMs)
         }
         // OkHttp HTML that yields a timeline is usable with WebView JS off.
-        val worksWithoutJs = verdict.worksHtml
-        val rssOk = probeRss(base, userAgent)
+        val worksWithoutJs = verdict.worksHtml && !verdict.challenge
+        val rss = probeRss(base, userAgent)
+        HostLimitations.recordProbe(
+            host = base,
+            worksHtml = verdict.worksHtml,
+            challenge = verdict.challenge,
+            rssWorks = rss.works,
+            rssUnsupported = rss.unsupported
+        )
         return entry.copy(
             worksHtml = verdict.worksHtml,
-            worksRss = rssOk,
+            worksRss = rss.works,
             worksWithoutJs = worksWithoutJs,
             ddosProtection = verdict.ddosProtection,
             lastProbedEpochMs = System.currentTimeMillis()
@@ -191,11 +198,14 @@ object InstanceHealthProbe {
         }
     }.getOrNull()
 
-    private fun probeRss(base: String, userAgent: String): Boolean {
+    internal data class RssVerdict(val works: Boolean, val unsupported: Boolean)
+
+    internal fun probeRss(base: String, userAgent: String): RssVerdict {
         val root = base.trimEnd('/')
         val candidates = PROBE_USERS.map { "$root/$it/rss" } + listOf("$root/rss")
+        var unsupported = false
         for (url in candidates) {
-            val ok = runCatching {
+            val verdict = runCatching {
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", userAgent)
@@ -206,16 +216,21 @@ object InstanceHealthProbe {
                     .get()
                     .build()
                 clientFor(url).newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use false
                     val body = response.body?.string().orEmpty()
-                    body.contains("<rss", ignoreCase = true) ||
+                    val code = response.code
+                    val works = body.contains("<rss", ignoreCase = true) ||
                         body.contains("<feed", ignoreCase = true) ||
                         body.contains("<item", ignoreCase = true)
+                    RssVerdict(
+                        works = works && code in 200..299,
+                        unsupported = HostLimitations.looksRssUnsupported(code, body)
+                    )
                 }
-            }.getOrDefault(false)
-            if (ok) return true
+            }.getOrNull() ?: continue
+            if (verdict.works) return verdict
+            if (verdict.unsupported) unsupported = true
         }
-        return false
+        return RssVerdict(works = false, unsupported = unsupported)
     }
 
     fun looksLikeChallenge(body: String, headers: Map<String, String>): Boolean {
@@ -231,7 +246,10 @@ object InstanceHealthProbe {
             lower.contains("checking your browser") ||
             lower.contains("/.gandalf/") ||
             lower.contains("/cdn-cgi/challenge-platform") ||
-            lower.contains("captcha")
+            lower.contains("captcha") ||
+            lower.contains("dogwaf") ||
+            lower.contains("prove you're human") ||
+            lower.contains("prove you&#39;re human")
         ) {
             return true
         }
